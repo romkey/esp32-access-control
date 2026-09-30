@@ -1,0 +1,38 @@
+# ESPHome for this repo. Config YAML and local_components live in the project root.
+#
+# Setup (once):
+#   cp src/secrets.yaml.example src/secrets.yaml   # edit with your Wi-Fi credentials
+#
+# Dashboard (edit YAML, compile, OTA upload):
+#   docker compose up
+#   open http://localhost:6052
+#
+# One-shot compile:
+#   docker compose run --rm esphome compile seeed-spectra6-13.yml
+#
+# One-shot OTA upload (device must already be on the network):
+#   docker compose run --rm esphome upload seeed-spectra6-13.yml
+#
+# Logs:
+#   docker compose run --rm esphome logs seeed-spectra6-13.yml
+#
+# USB serial flash from Docker works on Linux only. On macOS, compile here and
+# flash via the dashboard OTA/web installer, or use esphome natively for USB.
+
+services:
+  esphome:
+    image: ghcr.io/esphome/esphome:stable
+    container_name: esp32-access-control-esphome
+    restart: unless-stopped
+    ports:
+      - "6052:6052"
+    volumes:
+      - ./src:/config
+    environment:
+      # Required on macOS/Windows where Docker host networking is unavailable.
+      ESPHOME_DASHBOARD_USE_PING: "true"
+    # Linux: uncomment to flash over USB from the dashboard or CLI.
+    # privileged: true
+    # devices:
+    #   - /dev/ttyUSB0:/dev/ttyUSB0
+    #   - /dev/ttyACM0:/dev/ttyACM0

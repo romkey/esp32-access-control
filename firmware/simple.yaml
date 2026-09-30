@@ -1,0 +1,135 @@
+esphome:
+  name: led-switch
+
+esp32:
+  board: esp32-s3-devkitc-1
+  flash_size: 16MB
+  framework:
+    type: esp-idf
+
+# 8MB octal PSRAM (uses GPIO35-37 internally, so avoid those pins)
+psram:
+  mode: octal
+  speed: 80MHz
+
+logger:
+
+api:
+
+ota:
+  - platform: esphome
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  use_address: 10.0.0.143
+
+web_server:
+  version: 3
+    
+# The physical LED on pin 8
+output:
+  - platform: gpio
+    pin: GPIO8
+    id: led_output
+    # Uncomment if your LED is wired active-low (on when pin is LOW):
+    # inverted: true
+
+  # Wiegand reader LED and beeper.
+  # Most readers activate these by pulling the wire LOW, hence inverted: true.
+  # Remove it if yours is active-high.
+  - platform: gpio
+    pin: GPIO16
+    id: reader_led_output
+    inverted: true
+
+  - platform: gpio
+    pin: GPIO15
+    id: reader_beep_output
+    inverted: true
+
+# Software switch (shows up in Home Assistant / web UI)
+switch:
+  - platform: output
+    name: "LED"
+    output: led_output
+    id: led_switch
+    restore_mode: RESTORE_DEFAULT_OFF
+
+  # Manual control of the reader's LED and beeper
+  - platform: output
+    name: "Reader LED"
+    output: reader_led_output
+    id: reader_led_switch
+
+  - platform: output
+    name: "Reader Beep"
+    output: reader_beep_output
+    id: reader_beep_switch
+
+# Wiegand reader (requires ESPHome 2025.3 or newer)
+wiegand:
+  - id: reader
+    d0: GPIO18
+    d1: GPIO17
+    on_tag:
+      - logger.log:
+          format: "Tag: %s"
+          args: ['x.c_str()']
+      - text_sensor.template.publish:
+          id: last_tag
+          state: !lambda 'return x;'
+      - script.execute: acknowledge
+    on_key:
+      - logger.log:
+          format: "Key: %c"
+          args: ['x']
+    on_raw:
+      - logger.log:
+          format: "Raw: %d bits, value 0x%llx"
+          args: ['bits', 'value']
+      - lambda: |-
+          char raw[24];
+          snprintf(raw, sizeof(raw), "0x%llx", (unsigned long long) value);
+          id(last_raw).publish_state(raw);
+
+          // HID H10301: 26 bits = [even parity][8-bit facility][16-bit card][odd parity]
+          if (bits == 26) {
+            uint32_t v = (uint32_t) value;
+            bool even_ok = (__builtin_popcount(v >> 13) % 2) == 0;      // first 13 bits
+            bool odd_ok  = (__builtin_popcount(v & 0x1FFF) % 2) == 1;   // last 13 bits
+            if (even_ok && odd_ok) {
+              uint8_t facility = (v >> 17) & 0xFF;
+              uint16_t card = (v >> 1) & 0xFFFF;
+              char h10301[16];
+              snprintf(h10301, sizeof(h10301), "%u,%u", facility, card);
+              ESP_LOGI("wiegand", "H10301: %s (raw %s)", h10301, raw);
+              id(last_h10301).publish_state(h10301);
+            } else {
+              ESP_LOGW("wiegand", "26-bit frame %s failed parity check", raw);
+            }
+          }
+
+text_sensor:
+  - platform: template
+    name: "Last Tag"
+    id: last_tag
+
+  - platform: template
+    name: "Last Tag Raw"
+    id: last_raw
+
+  - platform: template
+    name: "Last Tag H10301"
+    id: last_h10301
+
+# Short beep plus reader LED flash on a successful card read
+script:
+  - id: acknowledge
+    then:
+      - switch.turn_on: reader_led_switch
+      - switch.turn_on: reader_beep_switch
+      - delay: 150ms
+      - switch.turn_off: reader_beep_switch
+      - delay: 350ms
+      - switch.turn_off: reader_led_switch

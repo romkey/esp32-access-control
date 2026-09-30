@@ -1,0 +1,7 @@
+firmware/secrets.yaml
+firmware/local*
+**/*.lck
+**/*-backups/**
+**/fabrication-toolkit-options.json
+**/production/**
+**/temp-freerouting.dsn
