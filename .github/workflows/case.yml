@@ -29,7 +29,7 @@ jobs:
         run: make -C case stl
 
       - name: Upload STLs
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: case-stl
           path: case/stl/*.stl
@@ -53,7 +53,7 @@ jobs:
         run: make -C case png
 
       - name: Upload previews
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: case-previews
           path: case/png/*.png
