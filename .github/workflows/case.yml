@@ -16,7 +16,7 @@ jobs:
     name: Render STLs
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install OpenSCAD
         run: |
@@ -42,7 +42,7 @@ jobs:
     # this job. It never fails the badge.
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install OpenSCAD and a virtual display
         run: |
