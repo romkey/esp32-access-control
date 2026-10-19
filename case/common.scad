@@ -15,21 +15,30 @@ module outline(grow = 0) {
 // with v = 0 on the WAGO edge).
 function bk(p) = [p[0], board_h - p[1]];
 
-// Place children in the board's own frame. The board stands upright,
-// rotated 90 degrees: its USB-C edge faces the top of the case and its
-// WAGO edge faces the right side wall. Z is measured from `z`.
+// Place children in the board's own frame. Z is measured from `z`.
+// Portrait: the board is turned 90 degrees, its USB-C edge faces the top
+//           of the case and its WAGO edge faces the right side wall.
+// Landscape: the board is turned 180 degrees, its USB-C edge faces the left
+//           side wall and its WAGO edge faces the top wall.
 module board_frame(z = 0) {
-    translate([0, board_bot_y, z])
-        rotate([0, 0, 90])
-            translate([0, -board_h / 2, 0])
-                children();
+    if (landscape)
+        translate([0, disp_cy, z])
+            rotate([0, 0, 180])
+                translate([-board_w / 2, -board_h / 2, 0])
+                    children();
+    else
+        translate([0, board_bot_y, z])
+            rotate([0, 0, 90])
+                translate([0, -board_h / 2, 0])
+                    children();
 }
 
 // Place children in the display's frame: centred, +Y toward the header.
 // Z = 0 is the inside face of the bezel plate; the display extends to -Z.
+// Landscape turns the display a quarter turn so the header end is on the left.
 module display_frame() {
     translate([0, disp_cy, Zi])
-        rotate([0, 0, header_top ? 0 : 180])
+        rotate([0, 0, (landscape ? 90 : 0) + (display_flip ? 180 : 0)])
             children();
 }
 

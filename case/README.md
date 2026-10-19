@@ -5,10 +5,17 @@
 A 3D-printable indoor kiosk for the ESP32 access control board. It is not
 watertight and not tamper resistant.
 
-- The board stands upright behind the display.
+- Two layouts: **portrait** (tall) and **landscape** (wide). In both the display is above the reader.
 - A 3.5" (ILI9488) or 4.0" (ST7796S) SPI TFT sits in a window in the front plate.
 - An HID ProxPoint Plus 6005 screws to the outside of the front, below the display.
-- USB-C leaves through the top. The two Wiegand terminal blocks leave through the right side.
+  In landscape the display and reader are both turned sideways.
+- The board sits behind the display. Cable openings depend on the layout:
+
+  | | USB-C | Wiegand cables |
+  |---|---|---|
+  | portrait | top wall | right wall |
+  | landscape | left wall | top wall |
+
 - Hang it on two screws, or print the optional stand to stand it on a desk.
 
 ## Building
@@ -16,7 +23,7 @@ watertight and not tamper resistant.
 Open `case.scad` in OpenSCAD, or from the command line:
 
 ```bash
-make            # every STL, both display sizes, into stl/
+make            # every STL, both layouts and display sizes, into stl/
 make png        # preview images into png/
 ```
 
@@ -25,10 +32,11 @@ CI runs `make stl` with OpenSCAD from Ubuntu's package archive, fails on any Ope
 To render one part:
 
 ```bash
-openscad -D 'part="shell"' -D 'display="4.0"' -o shell-4.0.stl case.scad
+openscad -D 'part="shell"' -D 'orientation="landscape"' -D 'display="4.0"' -o shell-landscape-4.0.stl case.scad
 ```
 
-`part` is `assembly`, `shell`, `bezel` or `stand`. `display` is `"3.5"` or `"4.0"`.
+`part` is `assembly`, `shell`, `bezel` or `stand`. `orientation` is `"portrait"` or `"landscape"`. `display` is `"3.5"` or `"4.0"`.
+STLs are named `<part>-<orientation>-<display>.stl`.
 For `assembly`, `exploded=60` pulls the parts apart and `with_stand=true` seats the case in the stand.
 Every dimension lives in `config.scad`.
 
@@ -44,15 +52,16 @@ Every dimension lives in `config.scad`.
 | `stand.scad` | Optional tilted desk stand. |
 | `board.scad`, `display.scad`, `reader.scad` | Mock-ups of the real parts, used only in `assembly`. |
 
-Print one shell, one bezel and, if you want it, one stand, all for the same display size.
+Print one shell, one bezel and, if you want it, one stand, all for the same layout and display size.
 
-| Part | 3.5" | 4.0" |
-|---|---|---|
-| shell | 64 × 197 × 34 mm | 70 × 207 × 34 mm |
-| bezel | 64 × 197 × 33 mm | 70 × 207 × 33 mm |
-| stand | 76 × 118 × 36 mm | 82 × 118 × 36 mm |
+| Part | Portrait 3.5" | Portrait 4.0" | Landscape 3.5" | Landscape 4.0" |
+|---|---|---|---|---|
+| shell | 64 × 197 × 34 mm | 70 × 207 × 34 mm | 106 × 120 × 34 mm | 116 × 125 × 34 mm |
+| bezel | 64 × 197 × 33 mm | 70 × 207 × 33 mm | 106 × 120 × 33 mm | 116 × 125 × 33 mm |
+| stand | 76 × 118 × 36 mm | 82 × 118 × 36 mm | 118 × 118 × 36 mm | 128 × 118 × 36 mm |
 
-The case is tall. It needs a bed of about 220 mm, or print it diagonally on a smaller one.
+The portrait case is tall. It needs a bed of about 220 mm, or print it diagonally on a smaller one.
+The landscape case fits a 130 mm bed.
 
 ## Print settings
 
@@ -77,10 +86,11 @@ The case is tall. It needs a bed of about 220 mm, or print it diagonally on a sm
 1. Screw the reader to the front. The two holes are 68.3 mm apart. Pass its cable through the 16 mm hole.
 2. Screw the display to the four bosses on the inside of the bezel. The glass sits 0.3 mm behind the window.
 3. Screw the board to the shell standoffs. Plug the display into board header J2 with the ribbon.
-4. Feed the Wiegand cables through the right-hand openings and the USB cable through the top.
+4. Feed the Wiegand and USB cables through their openings (see the table at the top).
 5. Close the shell onto the bezel. The outer half of the shell wall fits into a rebate in the bezel. Drive the four M3 screws in from the back.
 
-By default the display's header end is at the top, next to J2. Set `header_top = false` to turn the display around, and rotate the picture in firmware to match.
+By default the display's header end is at the top (portrait) or on the left (landscape), next to J2. Set `display_flip = true` to turn the display around, and rotate the picture in firmware to match.
+Landscape also needs the picture rotated 90 degrees in firmware, since the display is physically turned.
 
 ## Things to check against your hardware
 
@@ -88,7 +98,7 @@ These came from datasheets and drawings, not from measuring the parts.
 
 - **Reader hole spacing.** 68.3 mm (2.690") comes from a third-party template for the 6005. Hold the reader up to the bezel before printing and change `reader_screw_dy` if it is different. The cable hole is assumed to be midway between the screws.
 - **Wiegand wire entry.** The terminal blocks are assumed to take wires from the board edge side. If yours enter from the top, the openings still work but the strain relief will not.
-- **USB-C position.** The receptacle is assumed to sit flush with the board edge, 2.5 mm from the top wall.
+- **USB-C position.** The receptacle is assumed to sit flush with the board edge, about 2.5 mm from the wall.
 - **Display variants.** Dimensions come from the lcdwiki MSP3520 and MSP4021 outline drawings. Other 3.5" and 4.0" modules, and the capacitive touch versions, have different outlines.
 - **Fit.** Print the shell first and check the board and the cable openings before printing the bezel.
 

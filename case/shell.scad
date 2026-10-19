@@ -26,15 +26,25 @@ module shell() {
                 translate([bk(p)[0], bk(p)[1], standoff_h - 4.5])
                     cylinder(d = m2_pilot, h = 5);
 
-        // USB-C opening in the top wall, centred on the receptacle
-        stadium_y(usb_slot[0], usb_slot[1], 0, zb1 + usb_center_h,
-                  inner_top - 0.5, wall + 1);
-
-        // Wiegand cable openings in the right wall, one per terminal block
-        for (p = wago_pos)
-            stadium_x(wire_slot_w, wire_slot_h,
-                      board_bot_y + bk(p)[0], zb1 + wire_slot_z,
-                      inner_w / 2 - 0.5, wall + 1);
+        if (landscape) {
+            // USB-C opening in the left wall, centred on the receptacle
+            stadium_x(usb_slot[0], usb_slot[1], disp_cy, zb1 + usb_center_h,
+                      -outer_w / 2 - 1, wall + 1.5);
+            // Wiegand cable openings in the top wall, one per terminal block
+            for (p = wago_pos)
+                stadium_y(wire_slot_w, wire_slot_h,
+                          board_w / 2 - bk(p)[0], zb1 + wire_slot_z,
+                          inner_top - 0.5, wall + 1);
+        } else {
+            // USB-C opening in the top wall, centred on the receptacle
+            stadium_y(usb_slot[0], usb_slot[1], 0, zb1 + usb_center_h,
+                      inner_top - 0.5, wall + 1);
+            // Wiegand cable openings in the right wall, one per terminal block
+            for (p = wago_pos)
+                stadium_x(wire_slot_w, wire_slot_h,
+                          board_bot_y + bk(p)[0], zb1 + wire_slot_z,
+                          inner_w / 2 - 0.5, wall + 1);
+        }
 
         // Countersunk clearance holes for the M3 screws that go into the pillars
         for (p = pillar_pos)
@@ -44,8 +54,8 @@ module shell() {
             }
 
         // Keyholes for hanging the case on two screws
-        for (y = kh_y)
-            translate([0, y, -0.01]) {
+        for (k = kh_pos)
+            translate([k[0], k[1], -0.01]) {
                 cylinder(d = kh_big, h = floor_t + 0.02);
                 hull() {
                     cylinder(d = kh_small, h = floor_t + 0.02);

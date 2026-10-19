@@ -34,8 +34,8 @@ module stand() {
             translate([-pocket_w / 2, 0, -fit])
                 cube([pocket_w, stand_pocket + 100, pocket_d]);
             // Notch in front, wide enough for the reader
-            translate([-(reader_w / 2 + 3), 0, pocket_d - 1])
-                cube([reader_w + 6, stand_pocket + 100, reader_t + 40]);
+            translate([-(rdr_x / 2 + 3), 0, pocket_d - 1])
+                cube([rdr_x + 6, stand_pocket + 100, reader_t + 40]);
         }
     }
 }

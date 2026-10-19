@@ -51,7 +51,7 @@ module bezel() {
                 cylinder(d = reader_pilot, h = reader_boss_h + front_t);
 
         // Reader cable hole
-        translate([0, reader_cy + reader_cable_dy, Zi - 1])
+        translate([landscape ? reader_cable_dy : 0, reader_cy + (landscape ? 0 : reader_cable_dy), Zi - 1])
             cylinder(d = reader_cable_d, h = front_t + 2);
 
         // Pilot holes in the pillars, open at the bottom end
@@ -63,8 +63,8 @@ module bezel() {
         translate([0, reader_cy, Zi + front_t - reader_groove])
             linear_extrude(reader_groove + 0.01)
                 difference() {
-                    square([reader_w + 0.8 + 2 * 0.8, reader_h + 0.8 + 2 * 0.8], center = true);
-                    square([reader_w + 0.8, reader_h + 0.8], center = true);
+                    square([rdr_x + 0.8 + 2 * 0.8, rdr_y + 0.8 + 2 * 0.8], center = true);
+                    square([rdr_x + 0.8, rdr_y + 0.8], center = true);
                 }
     }
 }

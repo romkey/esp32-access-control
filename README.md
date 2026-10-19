@@ -18,4 +18,4 @@ At PDX Hackerspace we used RFID keys to unlock doors and access our laser cutter
 
 ## Case
 
-[`case/`](case/) has an OpenSCAD design for a 3D-printable wall or desk kiosk. It holds the board, a 3.5" or 4.0" SPI TFT, and an HID ProxPoint Plus reader mounted on the front. CI renders the STLs on every change and attaches them to the workflow run. See [`case/README.md`](case/README.md) for parts, print settings and assumptions to check.
+[`case/`](case/) has an OpenSCAD design for a 3D-printable wall or desk kiosk, in portrait and landscape layouts. It holds the board, a 3.5" or 4.0" SPI TFT, and an HID ProxPoint Plus reader mounted on the front. CI renders the STLs on every change and attaches them to the workflow run. See [`case/README.md`](case/README.md) for parts, print settings and assumptions to check.

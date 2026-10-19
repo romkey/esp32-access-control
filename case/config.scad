@@ -13,13 +13,15 @@
 // =====================================================================
 
 // ---- Selection ------------------------------------------------------
+orientation = "portrait"; // "portrait" (tall, display above reader) or
+                          // "landscape" (wide, display above reader, both turned sideways)
 display  = "3.5";       // "3.5" (ILI9488, MSP3520) or "4.0" (ST7796S, MSP4020/4021)
 part     = "assembly";  // "assembly" | "shell" | "bezel" | "stand"
 exploded = 0;           // assembly only: pull parts apart by this many mm
 with_stand = false;     // assembly only: show the case seated in the stand
-header_top = true;      // true: display's 14-pin header end is at the top,
-                        //       next to the board's display header J2.
-                        // false: rotated 180 degrees.
+display_flip = false;   // false: the display's 14-pin header end is at the top
+                        //        (portrait) or left (landscape), next to the board's J2.
+                        // true:  turned 180 degrees; rotate the picture in firmware to match.
 $fn = 48;
 
 // ---- Printed part parameters ----------------------------------------
@@ -63,7 +65,7 @@ usb_slot     = [14, 7.5];   // opening in the top wall (width, height)
 usb_center_h = 1.63;        // receptacle centre above the PCB top
 wire_slot_h  = 9;           // opening height for the Wiegand cables
 wire_slot_z  = 5;           // slot centre above the PCB top
-wire_slot_w  = 24;          // opening width, one per terminal block
+wire_slot_w  = 22;          // opening width, one per terminal block
 
 // ---- Displays -------------------------------------------------------
 // From the lcdwiki outline drawings MSP3520_Size.pdf / MSP4021_Size.pdf.
@@ -91,7 +93,7 @@ win_margin   = 0.5;                    // window is lit area plus this per side
 reader_w      = 43.7;   // 1.720"
 reader_h      = 79.6;   // 3.135"
 reader_t      = 16.8;   // 0.660"
-reader_screw_dy = 68.3; // 2.690" between the two mounting screws
+reader_screw_dy = 68.3; // 2.690" between the two mounting screws (along the reader's long side)
 reader_cable_d  = 16;   // 5/8" cable hole
 reader_cable_dy = 0;    // cable hole offset from the midpoint between the screws
 reader_boss_h   = 14;   // material behind the plate for the screws to bite into
@@ -100,21 +102,28 @@ reader_margin   = 4;    // gap from reader body to the bottom inner wall
 reader_groove   = 0.4;  // engraved locating outline on the front face
 
 // ---- Layout (derived) ------------------------------------------------
+landscape = orientation == "landscape";
 disp_reader_gap = 10;   // between reader body and display PCB
 disp_top_gap    = 1.0;  // between display PCB and the top inner wall
 
-inner_w   = disp_w + 2 * side_gap;
+// Size of the display and the reader as they appear on the front, X by Y.
+dsp_x = landscape ? disp_l : disp_w;
+dsp_y = landscape ? disp_w : disp_l;
+rdr_x = landscape ? reader_h : reader_w;
+rdr_y = landscape ? reader_w : reader_h;
+
+inner_w   = dsp_x + 2 * side_gap;
 outer_w   = inner_w + 2 * wall;
 
-reader_cy  = wall + reader_margin + reader_h / 2;
-reader_top = reader_cy + reader_h / 2;
+reader_cy  = wall + reader_margin + rdr_y / 2;
+reader_top = reader_cy + rdr_y / 2;
 disp_bot   = reader_top + disp_reader_gap;
-disp_cy    = disp_bot + disp_l / 2;
-disp_top   = disp_bot + disp_l;
+disp_cy    = disp_bot + dsp_y / 2;
+disp_top   = disp_bot + dsp_y;
 inner_top  = disp_top + disp_top_gap;
 outer_h    = inner_top + wall;
 
-board_bot_y = disp_top - board_w;   // board is top-aligned with the display
+board_bot_y = disp_top - board_w;   // portrait: board is top-aligned with the display
 
 // Depth: the board sits on standoffs, the display sits behind the bezel.
 zb0       = floor_t + standoff_h;   // underside of the board
@@ -131,17 +140,20 @@ disp_boss_h = disp_gap + disp_stack;
 // Pillars that carry the M3 screws from the back of the shell into the bezel
 pillar_d   = 7;
 pillar_x   = inner_w / 2 - pillar_d / 2 - 0.3;
-pillar_pos = [[-pillar_x, wall + 5],
-              [ pillar_x, wall + 5],
-              [-pillar_x, reader_top + disp_reader_gap / 2],
-              [ pillar_x, reader_top + disp_reader_gap / 2]];
+pillar_gap_y = reader_top + disp_reader_gap / 2;
+pillar_pos = concat([[-pillar_x, wall + 5],
+                     [ pillar_x, wall + 5],
+                     [-pillar_x, pillar_gap_y],
+                     [ pillar_x, pillar_gap_y]],
+                    landscape ? [[0, pillar_gap_y]] : []);   // the wide plate needs a fifth
 pillar_gap = 0.2;       // pillar end stops this far above the floor
 
 // Wall-mount keyholes in the back of the shell
 kh_big   = 9;
 kh_small = 4.6;
 kh_slot  = 9;
-kh_y     = [wall + 14, inner_top - 14];
+kh_pos   = landscape ? [[-35, inner_top - 14], [35, inner_top - 14]]
+                     : [[0, wall + 14], [0, inner_top - 14]];
 
 // ---- Stand ----------------------------------------------------------
 stand_tilt   = 10;      // degrees the case leans back
