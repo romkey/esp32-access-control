@@ -1,5 +1,33 @@
-firmware/secrets.yaml
-firmware/local*
+# ESPHome build output
+.esphome/
+
+# Firmware images contain the credentials they were built with
+*.bin
+*.elf
+*.uf2
+*.hex
+dist/
+site/
+
+# Secrets and personal device configs (either extension)
+**/secrets.yaml
+**/secrets.yml
+**/local*.yaml
+**/local*.yml
+
+# Python
+__pycache__/
+*.pyc
+
+# macOS
+.DS_Store
+
+# Editors
+*~
+.vscode/
+.idea/
+
+# KiCad and fabrication output
 **/*.lck
 **/*-backups/**
 **/fabrication-toolkit-options.json
