@@ -5,3 +5,7 @@ firmware/local*
 **/fabrication-toolkit-options.json
 **/production/**
 **/temp-freerouting.dsn
+
+# OpenSCAD build output
+case/stl/
+case/png/

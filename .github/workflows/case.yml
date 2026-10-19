@@ -1,0 +1,59 @@
+name: Case
+
+on:
+  push:
+    paths:
+      - 'case/**'
+      - '.github/workflows/case.yml'
+  pull_request:
+    paths:
+      - 'case/**'
+      - '.github/workflows/case.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Render STLs
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install OpenSCAD
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends openscad make
+          openscad --version
+
+      # Fails on any OpenSCAD warning or empty STL. See case/Makefile.
+      - name: Render STLs (3.5" and 4.0" displays)
+        run: make -C case stl
+
+      - name: Upload STLs
+        uses: actions/upload-artifact@v4
+        with:
+          name: case-stl
+          path: case/stl/*.stl
+          if-no-files-found: error
+
+  previews:
+    name: Render previews
+    runs-on: ubuntu-24.04
+    # Needs OpenGL through a virtual display, which is the flaky part of
+    # this job. It never fails the badge.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install OpenSCAD and a virtual display
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends openscad make xvfb
+
+      - name: Render previews
+        run: make -C case png
+
+      - name: Upload previews
+        uses: actions/upload-artifact@v4
+        with:
+          name: case-previews
+          path: case/png/*.png
