@@ -1,8 +1,13 @@
 # Door strike: one or two relay or MOSFET outputs and a script that pulses
 # them to unlock the door.
 #
-# Needs: the pin(s) below. The board has no relay output of its own; the pins
-# are whatever you wire the driver to, so the including config must set them.
+# An example package: the board has no relay output of its own, so this is for
+# a relay or strike driven from the J1 aux header or a satellite board.
+#
+# Needs: the pin(s) below. They are a required substitution that the including
+# config sets for its own hardware (examples/access-control.yaml uses GPIO38
+# and GPIO39 as example values; J1 exposes IO38 to IO42; GPIO19 and GPIO20 are
+# the S3's USB pins).
 # Provides: switches `door_relay_1` / `door_relay_2` and the script
 # `door_unlock_pulse`, which wiegand-reader.yaml runs on a granted tag.
 # Nothing else calls it: the unlock endpoint in access-site.yaml only logs.

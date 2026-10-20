@@ -23,8 +23,10 @@ All notable changes to this project are documented here. The format follows
   (`access_db`, `access_site`, `access_syslog`, `push_auth`), `packages/`
   (`access-door`, `push-auth`, `access-db`, `access-site`, `door-relays`,
   `wiegand-reader`), `examples/access-control.yaml` and
-  `examples/common/base.yaml`. Pins are substitutions; the door relay pins are
-  placeholders (GPIO38/39) until the wiring is decided.
+  `examples/common/base.yaml`. Pins are substitutions. `door-relays` is an example
+  package for a relay or strike on the aux header or a satellite board; its
+  pins are required substitutions, and the example's GPIO38/39 are example
+  values.
 
 ### Fixed
 

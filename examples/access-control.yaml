@@ -12,9 +12,10 @@ substitutions:
   wiegand_beep_pin: GPIO15
   wiegand_led_inverted: "true"
   wiegand_beep_inverted: "true"
-  # TODO(owner): the board has no relay output; these are placeholders on the
-  # J1 header (IO38, IO39) until the wiring is decided. Not GPIO19/20: those are
-  # the S3's USB pins.
+  # Example values: the board has no relay output, and door-relays.yaml is an
+  # example for a relay or strike driven from the J1 aux header (IO38 to IO42)
+  # or a satellite board. Set these for your own hardware. Not GPIO19/20: those
+  # are the S3's USB pins.
   door_relay_1_pin: GPIO38
   door_relay_2_pin: GPIO39
 

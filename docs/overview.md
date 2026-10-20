@@ -31,9 +31,9 @@ No I2C devices on the board.
   access-control.yaml `push_auth_token` and `syslog_server`.
 - Wiegand needs ESPHome 2025.3 or newer.
 
-## Open items
+## Notes
 
-- Door relay pins (`door_relay_1_pin`, `door_relay_2_pin`) are placeholders.
+- `door-relays` is an example package for a relay or strike on the J1 aux header or a satellite board; `door_relay_1_pin` and `door_relay_2_pin` are required substitutions, and the example's GPIO38/39 are example values.
 - Only reader 1 is wired in the examples; reader 2's pins aren't in BOFFF.md.
 - Only an ESP32-S3 example exists, since the hardware is S3-only.
 

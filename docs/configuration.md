@@ -11,8 +11,7 @@ auth and OTA upload off. Secrets: `wifi_ssid`, `wifi_password`, `api_encryption_
 
 The door controller for the ESP32-S3 board. Also needs secrets `push_auth_token` and
 `syslog_server`. Reader 1 uses D0 = GPIO18, D1 = GPIO17, LED = GPIO16, beep = GPIO15
-(both active low). Door relays are **placeholders** on GPIO38/39 (J1); GPIO19/20 are the
-S3's USB pins and must not be used.
+(both active low). The door relay pins are required substitutions; the example uses GPIO38 and GPIO39 (J1 exposes IO38 to IO42) as example values, and `door-relays.yaml` is an example package for a relay or strike on the aux header or a satellite board. Set them for your own hardware. GPIO19/20 are the S3's USB pins and must not be used.
 
 Using the packages from your own config: add `external_components` pointing at this repo
 (for `components/`), include `packages/access-door.yaml`, and set the substitutions below.

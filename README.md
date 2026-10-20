@@ -54,8 +54,9 @@ I2C: SDA and SCL on J3, with 4.7k pull-ups to 3.3V. The board carries no I2C dev
 
 `examples/simple.yaml` and `examples/access-control.yaml` wire one reader on D0 = GPIO18, D1 = GPIO17, reader LED = GPIO16
 (active low) and beeper = GPIO15 (active low). Check these against the schematic before
-relying on them. The door relay pins in `examples/access-control.yaml` (GPIO38, GPIO39 on the
-J1 header) are placeholders: the board has no relay output yet.
+relying on them. The board has no relay output; `packages/door-relays.yaml` is an example for a relay or strike driven from
+the J1 aux header or a satellite board. `examples/access-control.yaml` uses GPIO38 and GPIO39 (J1) as example
+values; set `door_relay_1_pin` and `door_relay_2_pin` for your own hardware.
 
 Using the packages from another project:
 

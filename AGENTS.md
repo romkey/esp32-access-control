@@ -35,4 +35,4 @@ Device configs are in `examples/` (shared settings in `examples/common/base.yaml
 reusable logic in `packages/`, C++ in `components/`. Pins and the board live in
 the examples; packages take them as substitutions. `firmware/` is for published,
 secret-free configs and isn't used yet; any local files there are scratch. The
-door relay pins are placeholders until the owner decides the wiring.
+`door-relays` is an example package for a relay or door strike driven from an aux header (J1) or a satellite board; the board itself has no relay output. Its pins are a required substitution that users set for their own hardware; the example uses GPIO38 and GPIO39 as example values.
