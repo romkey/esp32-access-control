@@ -3,8 +3,8 @@
 # workflow and docker-compose.yaml all use this so the list lives in one place.
 #
 # This repo doesn't publish firmware yet, so only examples/ is built by
-# default. firmware/ holds work-in-progress device configs and packages that
-# aren't standalone configs. When firmware publishing is set up (RULES.md
+# default. Packages live in packages/ and shared config in examples/common/;
+# neither is a standalone config. When firmware publishing is set up (RULES.md
 # section 9), add firmware to the default list below.
 #
 #   scripts/list-configs.sh              # examples/

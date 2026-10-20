@@ -1,0 +1,63 @@
+# Settings shared by every example. Not built on its own.
+#
+# Needs these secrets (see examples/secrets.yaml.example): wifi_ssid,
+# wifi_password, api_encryption_key, fallback_ap_password,
+# web_server_username, web_server_password.
+# Examples set `esphome: name:` and `comment:`, the board, and pins.
+
+substitutions:
+  # Matches the release tag; scripts/bump-version.sh keeps it current.
+  project_version: "0.1.0"
+  base_fallback_ap_ssid: "Fallback Hotspot"
+
+esphome:
+  min_version: 2026.9.0
+  project:
+    name: romkey.esp32-access-control
+    version: ${project_version}
+
+packages:
+  esp32: github://romkey/esphome-lib/lib/esp32.yml@v0.2.0
+  wifi-diagnostics: github://romkey/esphome-lib/lib/wifi-diagnostics.yml@v0.2.0
+  restart: github://romkey/esphome-lib/lib/restart.yml@v0.2.0
+
+logger:
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: ${base_fallback_ap_ssid}
+    password: !secret fallback_ap_password
+
+captive_portal:
+
+api:
+  encryption:
+    key: !secret api_encryption_key
+
+ota:
+  - platform: esphome
+    # Reuses the api key; the OTA password option is deprecated.
+    encryption:
+      key: !secret api_encryption_key
+
+button:
+  - platform: safe_mode
+    name: "Safe Mode"
+    entity_category: config
+  - platform: factory_reset
+    name: "Factory Reset"
+    entity_category: config
+
+web_server:
+  version: 3
+  # The web upload page is unencrypted; encrypted OTA covers updates.
+  ota: false
+  auth:
+    type: digest
+    username: !secret web_server_username
+    password: !secret web_server_password
+
+time:
+  - platform: homeassistant

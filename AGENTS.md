@@ -29,13 +29,10 @@ library, and it is mostly hardware: the ESPHome firmware is one part of three.
   so GPIOs are 3.3V; the pin assignments are in `hw/` and BOFFF.md, not
   something to guess.
 
-### Not yet at the rules' layout
+### Layout
 
-Device configs belong in `examples/` with reusable logic in `packages/` and
-C++ in `components/` (RULES.md section 1). Only `examples/simple.yaml`, a
-bring-up config, is there so far. The real firmware (`firmware/*.yaml`,
-`firmware/components/`) is still local, uncommitted work in progress; some
-of it hard-codes keys and passwords that must move to `secrets.yaml` before
-it is committed (the `esphome-secrets` hook will refuse it). Don't commit it
-as it is, and don't move it without being asked. `scripts/list-configs.sh`
-builds only `examples/` until firmware publishing is set up.
+Device configs are in `examples/` (shared settings in `examples/common/base.yaml`),
+reusable logic in `packages/`, C++ in `components/`. Pins and the board live in
+the examples; packages take them as substitutions. `firmware/` is for published,
+secret-free configs and isn't used yet; any local files there are scratch. The
+`door-relays` is an example package for a relay or door strike driven from an aux header (J1) or a satellite board; the board itself has no relay output. Its pins are a required substitution that users set for their own hardware; the example uses GPIO38 and GPIO39 as example values.

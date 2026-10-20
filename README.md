@@ -19,7 +19,11 @@ At PDX Hackerspace we used RFID keys to unlock doors and access our laser cutter
 |------|------------|
 | `hw/reader/<version>/` | KiCad project for the board, one directory per revision |
 | `BOFFF.md` | Bill of Form, Fit and Function: board outline, mounting holes and connector positions, for designing enclosures |
+| `examples/access-control.yaml` | The door controller: Wiegand reader, access database, door relay, syslog |
 | `examples/simple.yaml` | ESPHome config for bring-up: LED switch, reader LED and beeper, Wiegand tag reading |
+| `examples/common/base.yaml` | Settings every example shares: encrypted API and OTA, recovery, web server |
+| `packages/` | Board-agnostic ESPHome packages for the door controller; pins come from the including config |
+| `components/` | C++ external components: `access_db`, `access_site`, `access_syslog`, `push_auth` |
 | `case/` | OpenSCAD design for a wall or desk kiosk in portrait and landscape layouts; see [case/README.md](case/README.md) |
 | `datasheets/` | Manufacturer datasheets, each with a license note |
 | `docs/` | [Overview](docs/overview.md) and [configuration reference](docs/configuration.md) |
@@ -48,9 +52,22 @@ Connectors, from [BOFFF.md](BOFFF.md):
 
 I2C: SDA and SCL on J3, with 4.7k pull-ups to 3.3V. The board carries no I2C devices of its own.
 
-`examples/simple.yaml` wires one reader on D0 = GPIO18, D1 = GPIO17, reader LED = GPIO16
+`examples/simple.yaml` and `examples/access-control.yaml` wire one reader on D0 = GPIO18, D1 = GPIO17, reader LED = GPIO16
 (active low) and beeper = GPIO15 (active low). Check these against the schematic before
-relying on them.
+relying on them. The board has no relay output; `packages/door-relays.yaml` is an example for a relay or strike driven from
+the J1 aux header or a satellite board. `examples/access-control.yaml` uses GPIO38 and GPIO39 (J1) as example
+values; set `door_relay_1_pin` and `door_relay_2_pin` for your own hardware.
+
+Using the packages from another project:
+
+```yaml
+external_components:
+  - source: github://romkey/esp32-access-control@vX.Y.Z
+packages:
+  access-door: github://romkey/esp32-access-control/packages/access-door.yaml@vX.Y.Z
+```
+
+See [docs/configuration.md](docs/configuration.md) for the substitutions each package takes.
 
 Datasheets: [TXS0108E level shifter](datasheets/txs0108e.pdf),
 [WAGO 2601-1106 terminal block](datasheets/2946_WAGO26011106enUS.pdf).
@@ -60,7 +77,7 @@ Datasheets: [TXS0108E level shifter](datasheets/txs0108e.pdf),
 Requires Docker. Nothing else needs installing.
 
 ```bash
-cp examples/secrets.yaml.example examples/secrets.yaml   # then edit it
+cp examples/secrets.yaml.example examples/secrets.yaml   # then edit it (generate a real api key)
 docker compose run --rm validate      # esphome config on every example
 docker compose run --rm build         # compile every example
 docker compose run --rm lint          # all pre-commit checks, like CI

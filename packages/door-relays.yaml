@@ -1,0 +1,72 @@
+# Door strike: one or two relay or MOSFET outputs and a script that pulses
+# them to unlock the door.
+#
+# An example package: the board has no relay output of its own, so this is for
+# a relay or strike driven from the J1 aux header or a satellite board.
+#
+# Needs: the pin(s) below. They are a required substitution that the including
+# config sets for its own hardware (examples/access-control.yaml uses GPIO38
+# and GPIO39 as example values; J1 exposes IO38 to IO42; GPIO19 and GPIO20 are
+# the S3's USB pins).
+# Provides: switches `door_relay_1` / `door_relay_2` and the script
+# `door_unlock_pulse`, which wiegand-reader.yaml runs on a granted tag.
+# Nothing else calls it: the unlock endpoint in access-site.yaml only logs.
+#
+# Substitutions (default):
+#   door_relay_1_pin (required)           e.g. GPIO38
+#   door_relay_2_pin (required if count is 2; the output is declared either way)
+#   door_relay_count ("1")                1 or 2
+#   door_relay_inverted ("false")         true if the driver is active low
+#   door_relay_pulse_ms ("3000")          how long the door stays unlocked
+#   door_relay_1_name ("Door Relay 1"), door_relay_2_name ("Door Relay 2")
+
+substitutions:
+  door_relay_count: "1"
+  door_relay_inverted: "false"
+  door_relay_pulse_ms: "3000"
+  door_relay_1_name: "Door Relay 1"
+  door_relay_2_name: "Door Relay 2"
+
+output:
+  - platform: gpio
+    id: door_relay_1_out
+    pin:
+      number: ${door_relay_1_pin}
+      inverted: ${door_relay_inverted}
+
+  - platform: gpio
+    id: door_relay_2_out
+    pin:
+      number: ${door_relay_2_pin}
+      inverted: ${door_relay_inverted}
+
+switch:
+  - platform: output
+    id: door_relay_1
+    name: "${door_relay_1_name}"
+    output: door_relay_1_out
+    restore_mode: ALWAYS_OFF
+
+  - platform: output
+    id: door_relay_2
+    name: "${door_relay_2_name}"
+    output: door_relay_2_out
+    restore_mode: ALWAYS_OFF
+
+script:
+  - id: door_unlock_pulse
+    mode: restart
+    then:
+      - switch.turn_on: door_relay_1
+      - if:
+          condition:
+            lambda: 'return strcmp("${door_relay_count}", "2") == 0;'
+          then:
+            - switch.turn_on: door_relay_2
+      - delay: ${door_relay_pulse_ms}ms
+      - switch.turn_off: door_relay_1
+      - if:
+          condition:
+            lambda: 'return strcmp("${door_relay_count}", "2") == 0;'
+          then:
+            - switch.turn_off: door_relay_2

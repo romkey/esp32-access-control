@@ -1,0 +1,56 @@
+# Site identity and syslog: names this controller and reports events (online,
+# door opened) to a syslog server. Also serves a POST endpoint that records
+# "unlocked by <person>" in syslog for a UID in the access database. It only
+# logs: it does not operate the door relay.
+#
+# Needs: secret `syslog_server` (an IPv4 address or a hostname resolved once
+# and cached; IPv6 is not supported); push-auth.yaml (`push_auth_cfg`) and
+# access-db.yaml (`access_db_cfg`).
+# Provides: `access_site_cfg` and `access_syslog_cfg`. Sends the "online"
+# message once Wi-Fi connects.
+#
+# Substitutions (default):
+#   access_site_controller_name ("Access Control")  name reported in syslog
+#   access_site_syslog_port (514)
+#   access_site_hostname (access-control)           syslog hostname
+#   access_site_unlock_path (/access-unlock)
+#   access_site_entity_category (diagnostic)
+#   access_site_controller_name_entity_name ("Controller Name")
+
+substitutions:
+  access_site_controller_name: "Access Control"
+  access_site_syslog_port: "514"
+  access_site_hostname: access-control
+  access_site_unlock_path: /access-unlock
+  access_site_entity_category: "diagnostic"
+  access_site_controller_name_entity_name: "Controller Name"
+
+esphome:
+  min_version: 2025.3.0
+  on_boot:
+    priority: 600
+    then:
+      - wait_until:
+          wifi.connected:
+      - lambda: 'id(access_syslog_cfg).send_online();'
+
+access_site:
+  id: access_site_cfg
+  name: ${access_site_controller_name}
+
+access_syslog:
+  id: access_syslog_cfg
+  server: !secret syslog_server
+  port: ${access_site_syslog_port}
+  site_id: access_site_cfg
+  access_db_id: access_db_cfg
+  auth_id: push_auth_cfg
+  unlock_path: ${access_site_unlock_path}
+  hostname: ${access_site_hostname}
+
+text_sensor:
+  - platform: access_site
+    access_site_id: access_site_cfg
+    controller_name:
+      name: "${access_site_controller_name_entity_name}"
+      entity_category: "${access_site_entity_category}"
