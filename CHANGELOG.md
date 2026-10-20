@@ -16,6 +16,8 @@ All notable changes to this project are documented here. The format follows
   hooks; CI, Lint and Release workflows; Renovate configuration; helper
   scripts; AGENTS.md; SECURITY.md; docs/overview.md and docs/configuration.md.
 - License note for each datasheet, and the MIT `LICENSE`.
+- `.github/actionlint.yaml` teaches actionlint the `ubuntu-26.04` runner label the Case
+  workflow uses; the pinned actionlint release doesn't know it yet.
 
 ### Changed
 
