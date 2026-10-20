@@ -3,7 +3,8 @@
 # "unlocked by <person>" in syslog for a UID in the access database. It only
 # logs: it does not operate the door relay.
 #
-# Needs: secret `syslog_server`; push-auth.yaml (`push_auth_cfg`) and
+# Needs: secret `syslog_server` (an IPv4 address or a hostname resolved once
+# and cached; IPv6 is not supported); push-auth.yaml (`push_auth_cfg`) and
 # access-db.yaml (`access_db_cfg`).
 # Provides: `access_site_cfg` and `access_syslog_cfg`. Sends the "online"
 # message once Wi-Fi connects.

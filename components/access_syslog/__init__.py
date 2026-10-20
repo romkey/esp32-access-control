@@ -24,11 +24,25 @@ CONF_UNLOCK_PATH = "unlock_path"
 CONF_HOSTNAME = "hostname"
 CONF_FACILITY = "facility"
 
+
+def validate_server(value):
+    """An IPv4 address or a hostname; IPv6 literals are not supported."""
+    value = cv.string_strict(value).strip()
+    if not value:
+        raise cv.Invalid("server must not be empty")
+    if ":" in value or "/" in value or " " in value or "[" in value:
+        raise cv.Invalid(
+            "server must be an IPv4 address or a hostname (IPv6 addresses, "
+            "ports and URLs are not supported; set the port with `port:`)"
+        )
+    return value
+
+
 CONFIG_SCHEMA = cv.All(
     cv.Schema(
         {
             cv.GenerateID(): cv.declare_id(AccessSyslog),
-            cv.Required(CONF_SERVER): cv.string,
+            cv.Required(CONF_SERVER): validate_server,
             cv.Optional(CONF_PORT, default=514): cv.port,
             cv.Required(CONF_ACCESS_DB_ID): cv.use_id("access_db.AccessDb"),
             cv.Required(CONF_AUTH_ID): cv.use_id("push_auth.PushAuth"),

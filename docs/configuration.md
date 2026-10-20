@@ -27,7 +27,7 @@ Bundle that includes the five packages below. Set their required substitutions:
 |---------|----------|------------------------------|
 | `push-auth.yaml` | `push_auth_cfg`; token auth for HTTP endpoints | `push_auth_header` (Authorization), `push_auth_alt_header` (X-Push-Token) |
 | `access-db.yaml` | `access_db_cfg`; tag database in a LittleFS partition; lookup result entities | `access_db_path` (/access-db), `access_db_max_body_size` (131072), `access_db_partition_label` (storage), `access_db_mount_path` (/storage) |
-| `access-site.yaml` | site name, syslog (online/door-opened), and an `access_site_unlock_path` endpoint that logs a person's unlock (it does not fire the relay); secret `syslog_server` | `access_site_controller_name`, `access_site_syslog_port` (514), `access_site_hostname`, `access_site_unlock_path` (/access-unlock) |
+| `access-site.yaml` | site name, syslog (online/door-opened), and an `access_site_unlock_path` endpoint that logs a person's unlock (it does not fire the relay); secret `syslog_server` (IPv4 address or hostname; IPv6 not supported) | `access_site_controller_name`, `access_site_syslog_port` (514), `access_site_hostname`, `access_site_unlock_path` (/access-unlock) |
 | `door-relays.yaml` | `door_relay_1/2` switches, `door_unlock_pulse` script | `door_relay_count` (1), `door_relay_inverted` (false), `door_relay_pulse_ms` (3000) |
 | `wiegand-reader.yaml` | Wiegand reader, LED and beeper, last tag/key, facility and card | `wiegand_led_inverted`, `wiegand_beep_inverted` (false) |
 

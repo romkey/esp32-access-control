@@ -1,10 +1,12 @@
 #include "access_syslog.h"
 
 #include "esphome/components/web_server_base/web_server_base.h"
+#include "esphome/core/hal.h"
 #include "esphome/core/log.h"
 
 #include <ArduinoJson.h>
 #include <lwip/inet.h>
+#include <lwip/netdb.h>
 #include <lwip/sockets.h>
 #include <sys/time.h>
 #include <unistd.h>
@@ -18,6 +20,7 @@ namespace access_syslog {
 
 static const char *const TAG = "access_syslog";
 static constexpr size_t UNLOCK_BODY_MAX = 512;
+static constexpr uint32_t RESOLVE_RETRY_MS = 30000;
 
 AccessSyslog *global_access_syslog = nullptr;  // NOLINT
 
@@ -118,6 +121,45 @@ void AccessSyslog::close_socket_() {
   }
 }
 
+// The server is an IPv4 literal or a hostname. The result is cached, so a send
+// never does a DNS lookup once it has succeeded; after a failure the lookup is
+// retried at most every RESOLVE_RETRY_MS so a dead resolver can't stall sends.
+bool AccessSyslog::resolve_server_() {
+  if (this->dest_valid_) {
+    return true;
+  }
+  const uint32_t now = millis();
+  if (this->resolve_attempted_ && now - this->last_resolve_ms_ < RESOLVE_RETRY_MS) {
+    return false;
+  }
+  this->resolve_attempted_ = true;
+  this->last_resolve_ms_ = now;
+
+  struct sockaddr_in dest {};
+  dest.sin_family = AF_INET;
+  dest.sin_port = htons(this->port_);
+  if (inet_pton(AF_INET, this->server_.c_str(), &dest.sin_addr) != 1) {
+    struct addrinfo hints {};
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_DGRAM;
+    struct addrinfo *res = nullptr;
+    const int err = getaddrinfo(this->server_.c_str(), nullptr, &hints, &res);
+    if (err != 0 || res == nullptr) {
+      ESP_LOGW(TAG, "Cannot resolve syslog server %s (error %d); retrying in %us", this->server_.c_str(), err,
+               static_cast<unsigned>(RESOLVE_RETRY_MS / 1000));
+      if (res != nullptr) {
+        freeaddrinfo(res);
+      }
+      return false;
+    }
+    dest.sin_addr = reinterpret_cast<struct sockaddr_in *>(res->ai_addr)->sin_addr;
+    freeaddrinfo(res);
+  }
+  this->dest_ = dest;
+  this->dest_valid_ = true;
+  return true;
+}
+
 void AccessSyslog::send_message(const std::string &message) {
   if (message.empty()) {
     return;
@@ -127,11 +169,7 @@ void AccessSyslog::send_message(const std::string &message) {
     return;
   }
 
-  struct sockaddr_in dest {};
-  dest.sin_family = AF_INET;
-  dest.sin_port = htons(this->port_);
-  if (inet_pton(AF_INET, this->server_.c_str(), &dest.sin_addr) != 1) {
-    ESP_LOGE(TAG, "Invalid syslog server address: %s", this->server_.c_str());
+  if (!this->resolve_server_()) {
     return;
   }
 
@@ -151,7 +189,8 @@ void AccessSyslog::send_message(const std::string &message) {
     return;
   }
 
-  const ssize_t sent = sendto(this->socket_, packet, len, 0, reinterpret_cast<struct sockaddr *>(&dest), sizeof(dest));
+  const ssize_t sent =
+      sendto(this->socket_, packet, len, 0, reinterpret_cast<struct sockaddr *>(&this->dest_), sizeof(this->dest_));
   if (sent < 0) {
     ESP_LOGW(TAG, "Syslog send failed: errno %d", errno);
     this->close_socket_();

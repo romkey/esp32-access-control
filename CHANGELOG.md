@@ -34,6 +34,9 @@ All notable changes to this project are documented here. The format follows
   (2026.9), which reads the POST body before the handler runs; both now take
   it in `handleBody`. Clients must send a non-form `Content-Type`
   (`application/json`).
+- The syslog server may now be a hostname as well as an IPv4 address; it is
+  resolved once and cached, and a failed lookup is retried every 30 seconds.
+  IPv6 addresses are rejected at validation instead of failing at run time.
 - A failed rename no longer deletes the live access database; the new file
   replaces it in one step.
 

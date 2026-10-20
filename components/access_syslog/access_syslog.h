@@ -7,6 +7,7 @@
 #include "esphome/components/web_server_idf/web_server_idf.h"
 
 #include <esp_http_server.h>
+#include <lwip/sockets.h>
 #include <string>
 
 namespace esphome {
@@ -47,6 +48,7 @@ class AccessSyslog : public web_server_idf::AsyncWebHandler, public Component {
   void send_door_opened_for_person_(const std::string &person_name);
   void send_unlocked_by_person_(const std::string &person_name);
   bool ensure_socket_();
+  bool resolve_server_();
   void close_socket_();
 
   std::string server_;
@@ -58,6 +60,10 @@ class AccessSyslog : public web_server_idf::AsyncWebHandler, public Component {
   access_db::AccessDb *access_db_{nullptr};
   push_auth::PushAuth *auth_{nullptr};
   int socket_{-1};
+  struct sockaddr_in dest_ {};
+  bool dest_valid_{false};
+  bool resolve_attempted_{false};
+  uint32_t last_resolve_ms_{0};
   std::string body_;
   bool body_ok_{false};
 };
