@@ -40,6 +40,13 @@ All notable changes to this project are documented here. The format follows
 - Resolving a syslog hostname no longer blocks: it runs in a short-lived
   background task, messages are held (up to 8) until the address is known, and
   the address is looked up again after a Wi-Fi reconnect or a failed send.
+- Thread safety: the syslog queue, resolved address and DNS task state are
+  guarded by one mutex and only the main loop touches the syslog socket
+  (messages from the HTTP task are queued); the access database header, last
+  match and file swaps are guarded by another, and `get_last_match()` returns a
+  copy.
+- The PUT routes for the database upload and the unlock request read their own
+  body again (the POST fix had left them without one).
 - A failed rename no longer deletes the live access database; the new file
   replaces it in one step.
 

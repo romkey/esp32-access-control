@@ -14,6 +14,7 @@
 
 #include <cerrno>
 #include <cstdio>
+#include <algorithm>
 #include <cstring>
 #include <mutex>
 
@@ -26,7 +27,7 @@ namespace access_syslog {
 static const char *const TAG = "access_syslog";
 static constexpr size_t UNLOCK_BODY_MAX = 512;
 static constexpr uint32_t RESOLVE_RETRY_MS = 30000;
-static constexpr size_t MAX_PENDING = 8;
+static constexpr size_t MAX_PENDING = 16;
 
 AccessSyslog *global_access_syslog = nullptr;  // NOLINT
 
@@ -56,7 +57,7 @@ void AccessSyslog::setup() {
           httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, nullptr);
           return ESP_FAIL;
         }
-        global_access_syslog->handle_raw_request_(req);
+        global_access_syslog->handle_put_(req);
         return ESP_OK;
       },
       .user_ctx = nullptr,
@@ -93,7 +94,7 @@ std::string AccessSyslog::resolve_person_name_(const access_db::AccessDbLookupRe
     return match->name;
   }
   if (this->access_db_ != nullptr) {
-    const auto &last = this->access_db_->get_last_match();
+    const auto last = this->access_db_->get_last_match();
     if (last.found && !last.name.empty()) {
       return last.name;
     }
@@ -127,29 +128,47 @@ void AccessSyslog::close_socket_() {
   }
 }
 
+// Threads: the main loop, the HTTP server task (unlock endpoint) and a
+// short-lived DNS task all reach this class. The rules:
+//  - send_message() may be called from any thread; it only queues the message
+//    under mutex_.
+//  - Everything that touches the socket (ensure_socket_, transmit_,
+//    close_socket_) and the resolve bookkeeping runs on the main loop only,
+//    from loop(), so none of it needs a lock.
+//  - mutex_ guards pending_, dest_, dest_valid_ and resolving_; the DNS task
+//    publishes its result under it. It is never held across getaddrinfo,
+//    sendto or logging. Components live for the whole run, so the task's
+//    pointer to this never dangles.
+//
 // The server is an IPv4 literal or a hostname. A literal is parsed here (no
-// network access). A hostname is resolved by a short-lived FreeRTOS task, never
-// on the caller's thread: getaddrinfo() blocks for the resolver timeout, and
-// callers include the main loop (a granted tag unlocks the door and then
-// logs). This is why it is a task and not lwIP's dns_gethostbyname(): that
-// needs the tcpip core lock and a callback that fires on the tcpip thread,
-// while getaddrinfo() is the call ESP-IDF supports from any task. This only
-// reads the cached result; after a failure the next task starts at most every
+// network access). A hostname is resolved by a short-lived FreeRTOS task,
+// never on the main loop: getaddrinfo() blocks for the resolver timeout. A
+// task rather than lwIP's dns_gethostbyname(), which needs the tcpip core lock
+// and calls back on the tcpip thread; getaddrinfo() is the call ESP-IDF
+// supports from any task. After a failure the next task starts at most every
 // RESOLVE_RETRY_MS.
-bool AccessSyslog::resolve_server_() {
-  if (this->dest_valid_.load(std::memory_order_acquire)) {
-    return true;
-  }
-  if (this->resolving_.load()) {
-    return false;
+bool AccessSyslog::resolve_server_(struct sockaddr_in *out) {
+  {
+    std::lock_guard<std::mutex> lock(this->mutex_);
+    if (this->dest_valid_) {
+      *out = this->dest_;
+      return true;
+    }
+    if (this->resolving_) {
+      return false;
+    }
   }
 
   struct in_addr literal {};
   if (inet_pton(AF_INET, this->server_.c_str(), &literal) == 1) {
-    this->dest_.sin_family = AF_INET;
-    this->dest_.sin_port = htons(this->port_);
-    this->dest_.sin_addr = literal;
-    this->dest_valid_.store(true, std::memory_order_release);
+    struct sockaddr_in dest {};
+    dest.sin_family = AF_INET;
+    dest.sin_port = htons(this->port_);
+    dest.sin_addr = literal;
+    std::lock_guard<std::mutex> lock(this->mutex_);
+    this->dest_ = dest;
+    this->dest_valid_ = true;
+    *out = dest;
     return true;
   }
 
@@ -162,10 +181,14 @@ bool AccessSyslog::resolve_server_() {
   }
   this->resolve_attempted_ = true;
   this->last_resolve_ms_ = now;
-  this->resolving_.store(true);
+  {
+    std::lock_guard<std::mutex> lock(this->mutex_);
+    this->resolving_ = true;
+  }
   if (xTaskCreate(&AccessSyslog::resolve_task_, "syslog_dns", 4096, this, 1, nullptr) != pdPASS) {
     ESP_LOGW(TAG, "Cannot start the syslog DNS task");
-    this->resolving_.store(false);
+    std::lock_guard<std::mutex> lock(this->mutex_);
+    this->resolving_ = false;
   }
   return false;
 }
@@ -177,33 +200,44 @@ void AccessSyslog::resolve_task_(void *arg) {
   hints.ai_socktype = SOCK_DGRAM;
   struct addrinfo *res = nullptr;
   const int err = getaddrinfo(self->server_.c_str(), nullptr, &hints, &res);
-  if (err != 0 || res == nullptr) {
+
+  struct sockaddr_in dest {};
+  const bool ok = err == 0 && res != nullptr;
+  if (ok) {
+    dest.sin_family = AF_INET;
+    dest.sin_port = htons(self->port_);
+    dest.sin_addr = reinterpret_cast<struct sockaddr_in *>(res->ai_addr)->sin_addr;
+  } else {
     ESP_LOGW(TAG, "Cannot resolve syslog server %s (error %d); retrying in %us", self->server_.c_str(), err,
              static_cast<unsigned>(RESOLVE_RETRY_MS / 1000));
-  } else {
-    self->dest_.sin_family = AF_INET;
-    self->dest_.sin_port = htons(self->port_);
-    self->dest_.sin_addr = reinterpret_cast<struct sockaddr_in *>(res->ai_addr)->sin_addr;
-    self->dest_valid_.store(true, std::memory_order_release);
   }
   if (res != nullptr) {
     freeaddrinfo(res);
   }
-  self->resolving_.store(false);
+  {
+    std::lock_guard<std::mutex> lock(self->mutex_);
+    if (ok) {
+      self->dest_ = dest;
+      self->dest_valid_ = true;
+    }
+    self->resolving_ = false;
+  }
   vTaskDelete(nullptr);
 }
 
-// Forget a resolved hostname so the next send looks it up again; the address
+// Forget a resolved hostname so the next loop looks it up again; the address
 // may have changed. A literal needs no lookup. Not while a lookup is running.
+// Main loop only.
 void AccessSyslog::invalidate_server_() {
-  if (this->resolving_.load()) {
-    return;
-  }
   struct in_addr literal {};
   if (inet_pton(AF_INET, this->server_.c_str(), &literal) == 1) {
     return;
   }
-  this->dest_valid_.store(false, std::memory_order_release);
+  std::lock_guard<std::mutex> lock(this->mutex_);
+  if (this->resolving_) {
+    return;
+  }
+  this->dest_valid_ = false;
   this->resolve_attempted_ = false;
 }
 
@@ -214,42 +248,45 @@ void AccessSyslog::loop() {
   }
   this->was_connected_ = connected;
 
-  if (!this->pending_.empty() && this->resolve_server_()) {
-    std::deque<std::string> pending;
-    {
-      std::lock_guard<std::mutex> lock(this->pending_mutex_);
-      pending.swap(this->pending_);
+  struct sockaddr_in dest {};
+  if (!this->resolve_server_(&dest)) {
+    return;
+  }
+
+  std::deque<std::string> pending;
+  {
+    std::lock_guard<std::mutex> lock(this->mutex_);
+    if (this->pending_.empty()) {
+      return;
     }
-    for (const auto &message : pending) {
-      this->transmit_(message);
-    }
+    pending.swap(this->pending_);
+  }
+  for (const auto &message : pending) {
+    this->transmit_(dest, message);
   }
 }
 
-// Sends now if the server address is known; otherwise holds the last
-// MAX_PENDING messages until loop() sees it resolved.
+// Any thread. The message is sent by loop(), at once if the server address is
+// known and otherwise once it resolves; only the latest MAX_PENDING are kept.
 void AccessSyslog::send_message(const std::string &message) {
   if (message.empty()) {
     return;
   }
-  if (this->resolve_server_()) {
-    this->transmit_(message);
-    return;
+  bool dropped = false;
+  {
+    std::lock_guard<std::mutex> lock(this->mutex_);
+    if (this->pending_.size() >= MAX_PENDING) {
+      this->pending_.pop_front();
+      dropped = true;
+    }
+    this->pending_.push_back(message);
   }
-  std::lock_guard<std::mutex> lock(this->pending_mutex_);
-  if (this->pending_.size() >= MAX_PENDING) {
-    this->pending_.pop_front();
-  }
-  this->pending_.push_back(message);
-  const uint32_t now = millis();
-  if (now - this->last_pending_warn_ms_ >= RESOLVE_RETRY_MS || this->last_pending_warn_ms_ == 0) {
-    this->last_pending_warn_ms_ = now;
-    ESP_LOGW(TAG, "Syslog server %s not resolved yet; holding up to %u messages", this->server_.c_str(),
-             static_cast<unsigned>(MAX_PENDING));
+  if (dropped) {
+    ESP_LOGW(TAG, "Syslog queue full; dropped the oldest message");
   }
 }
 
-void AccessSyslog::transmit_(const std::string &message) {
+void AccessSyslog::transmit_(const struct sockaddr_in &dest, const std::string &message) {
   if (!this->ensure_socket_()) {
     return;
   }
@@ -271,7 +308,7 @@ void AccessSyslog::transmit_(const std::string &message) {
   }
 
   const ssize_t sent =
-      sendto(this->socket_, packet, len, 0, reinterpret_cast<struct sockaddr *>(&this->dest_), sizeof(this->dest_));
+      sendto(this->socket_, packet, len, 0, reinterpret_cast<const struct sockaddr *>(&dest), sizeof(dest));
   if (sent < 0) {
     ESP_LOGW(TAG, "Syslog send failed: errno %d", errno);
     this->close_socket_();
@@ -332,6 +369,31 @@ bool AccessSyslog::canHandle(web_server_idf::AsyncWebServerRequest *request) con
 // Clients must send a non-form Content-Type such as application/json.
 void AccessSyslog::handleBody(web_server_idf::AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index,
                               size_t total) {
+  this->on_body_(data, len, index, total);
+}
+
+// The PUT route is registered with httpd directly, so ESPHome has not read its
+// body; read it here and feed it through the same path. body_ is only touched
+// on the HTTP server task, which handles one request at a time.
+void AccessSyslog::handle_put_(httpd_req_t *req) {
+  const size_t total = req->content_len;
+  char buffer[128];
+  size_t index = 0;
+  if (total == 0) {
+    this->on_body_(nullptr, 0, 0, 0);
+  }
+  while (index < total) {
+    const int n = httpd_req_recv(req, buffer, std::min(total - index, sizeof(buffer)));
+    if (n <= 0) {
+      return;
+    }
+    this->on_body_(reinterpret_cast<uint8_t *>(buffer), n, index, total);
+    index += n;
+  }
+  this->handle_raw_request_(req);
+}
+
+void AccessSyslog::on_body_(uint8_t *data, size_t len, size_t index, size_t total) {
   if (index == 0) {
     this->body_.clear();
     this->body_ok_ = total > 0 && total <= UNLOCK_BODY_MAX;

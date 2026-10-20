@@ -8,7 +8,6 @@
 
 #include <esp_http_server.h>
 #include <lwip/sockets.h>
-#include <atomic>
 #include <deque>
 #include <mutex>
 #include <string>
@@ -43,6 +42,7 @@ class AccessSyslog : public web_server_idf::AsyncWebHandler, public Component {
   void handleRequest(web_server_idf::AsyncWebServerRequest *request) override;
   void handleBody(web_server_idf::AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index,
                   size_t total) override;
+  void handle_put_(httpd_req_t *req);
   void handle_raw_request_(httpd_req_t *req);
   bool isRequestHandlerTrivial() const override { return false; }
 
@@ -52,9 +52,10 @@ class AccessSyslog : public web_server_idf::AsyncWebHandler, public Component {
   void send_door_opened_for_person_(const std::string &person_name);
   void send_unlocked_by_person_(const std::string &person_name);
   bool ensure_socket_();
-  bool resolve_server_();
+  bool resolve_server_(struct sockaddr_in *out);
+  void on_body_(uint8_t *data, size_t len, size_t index, size_t total);
   void invalidate_server_();
-  void transmit_(const std::string &message);
+  void transmit_(const struct sockaddr_in &dest, const std::string &message);
   static void resolve_task_(void *arg);
   void close_socket_();
 
@@ -67,15 +68,17 @@ class AccessSyslog : public web_server_idf::AsyncWebHandler, public Component {
   access_db::AccessDb *access_db_{nullptr};
   push_auth::PushAuth *auth_{nullptr};
   int socket_{-1};
-  struct sockaddr_in dest_ {};
-  std::atomic<bool> dest_valid_{false};
-  std::atomic<bool> resolving_{false};
-  bool was_connected_{false};
+  // Guarded by mutex_ (any thread): the queue and the resolved address.
+  std::mutex mutex_;
   std::deque<std::string> pending_;
-  std::mutex pending_mutex_;
-  uint32_t last_pending_warn_ms_{0};
+  struct sockaddr_in dest_ {};
+  bool dest_valid_{false};
+  bool resolving_{false};
+  // Main loop only: the socket and the resolve scheduling.
+  bool was_connected_{false};
   bool resolve_attempted_{false};
   uint32_t last_resolve_ms_{0};
+  // HTTP server task only: the unlock request body.
   std::string body_;
   bool body_ok_{false};
 };

@@ -10,6 +10,7 @@
 
 #include <cstdint>
 #include <cstdio>
+#include <mutex>
 #include <string>
 
 namespace esphome {
@@ -38,7 +39,15 @@ class AccessDb : public web_server_idf::AsyncWebHandler, public Component {
 
   AccessDbLookupResult lookup(const std::string &rfid_code);
   AccessDbLookupResult lookup_by_uid(const std::string &uid);
-  const AccessDbLookupResult &get_last_match() const { return this->last_match_; }
+  // A copy: the stored match is replaced by lookups on other tasks.
+  AccessDbLookupResult get_last_match() const {
+    std::lock_guard<std::mutex> lock(this->db_mutex_);
+    return this->last_match_;
+  }
+  bool index_loaded() const {
+    std::lock_guard<std::mutex> lock(this->db_mutex_);
+    return this->index_loaded_;
+  }
 
   void set_version_sensor(sensor::Sensor *sensor) { this->version_sensor_ = sensor; }
   void set_entry_count_sensor(sensor::Sensor *sensor) { this->entry_count_sensor_ = sensor; }
@@ -51,16 +60,18 @@ class AccessDb : public web_server_idf::AsyncWebHandler, public Component {
   void handleRequest(web_server_idf::AsyncWebServerRequest *request) override;
   void handleBody(web_server_idf::AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index,
                   size_t total) override;
+  void handle_put_(httpd_req_t *req);
   void handle_raw_request_(httpd_req_t *req);
   bool isRequestHandlerTrivial() const override { return false; }
 
  protected:
+  void on_body_(httpd_req_t *req, uint8_t *data, size_t len, size_t index, size_t total);
   bool mount_filesystem_();
   void publish_status_(const std::string &status, const std::string &error = "");
   void publish_healthy_(bool healthy);
   void publish_sync_time_();
   bool build_index_from_json_file_(const std::string &json_path, std::string &response_json);
-  bool load_header_();
+  bool load_header_();  // caller holds db_mutex_
   AccessDbLookupResult lookup_loaded_(uint32_t rfid) const;
   bool read_record_at_(FILE *file, uint32_t record_offset, AccessDbLookupResult &result) const;
   static uint32_t parse_rfid_key_(const std::string &rfid_code);
@@ -71,6 +82,13 @@ class AccessDb : public web_server_idf::AsyncWebHandler, public Component {
   std::string partition_label_{"storage"};
   size_t max_body_size_{131072};
   bool fs_mounted_{false};
+  // Threads: the main loop (lookup on a tag, setup) and the HTTP server task
+  // (uploads, lookup_by_uid for the unlock endpoint). db_mutex_ guards
+  // header_, index_loaded_, last_match_ and every read of or swap of the
+  // database file; it is never held across network or HTTP calls. The upload
+  // state below (busy_, body_*) is only touched on the HTTP server task, which
+  // runs one request at a time.
+  mutable std::mutex db_mutex_;
   bool busy_{false};
   enum class BodyState { NONE, RECEIVING, BAD_TOKEN, BUSY, BAD_SIZE, STREAM_FAILED };
   BodyState body_state_{BodyState::NONE};

@@ -74,14 +74,21 @@ void AccessDb::setup() {
     return;
   }
 
-  if (this->load_header_()) {
+  bool loaded;
+  LoadedHeader header;
+  {
+    std::lock_guard<std::mutex> lock(this->db_mutex_);
+    loaded = this->load_header_();
+    header = this->header_;
+  }
+  if (loaded) {
     this->publish_healthy_(true);
     this->publish_status_("ready");
     if (this->version_sensor_ != nullptr) {
-      this->version_sensor_->publish_state(this->header_.version);
+      this->version_sensor_->publish_state(header.version);
     }
     if (this->entry_count_sensor_ != nullptr) {
-      this->entry_count_sensor_->publish_state(this->header_.entry_count);
+      this->entry_count_sensor_->publish_state(header.entry_count);
     }
   } else {
     this->publish_healthy_(false);
@@ -105,7 +112,7 @@ void AccessDb::setup() {
           httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, nullptr);
           return ESP_FAIL;
         }
-        global_access_db->handle_raw_request_(req);
+        global_access_db->handle_put_(req);
         return ESP_OK;
       },
       .user_ctx = nullptr,
@@ -158,7 +165,32 @@ void AccessDb::handleRequest(web_server_idf::AsyncWebServerRequest *request) { t
 // Clients must send a non-form Content-Type such as application/json.
 void AccessDb::handleBody(web_server_idf::AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index,
                           size_t total) {
-  httpd_req_t *req = *request;
+  this->on_body_(*request, data, len, index, total);
+}
+
+// The PUT route is registered with httpd directly, so ESPHome has not read its
+// body; read it here in chunks and feed it through the same path.
+void AccessDb::handle_put_(httpd_req_t *req) {
+  const size_t total = req->content_len;
+  auto buffer = std::make_unique<uint8_t[]>(STREAM_CHUNK_SIZE);
+  size_t index = 0;
+  if (total == 0) {
+    this->on_body_(req, buffer.get(), 0, 0, 0);
+  }
+  while (index < total) {
+    const int n =
+        httpd_req_recv(req, reinterpret_cast<char *>(buffer.get()), std::min(total - index, STREAM_CHUNK_SIZE));
+    if (n <= 0) {
+      // Connection dropped mid-body; the next upload cleans the temp file up.
+      return;
+    }
+    this->on_body_(req, buffer.get(), n, index, total);
+    index += n;
+  }
+  this->handle_raw_request_(req);
+}
+
+void AccessDb::on_body_(httpd_req_t *req, uint8_t *data, size_t len, size_t index, size_t total) {
   const std::string json_tmp = this->mount_path_ + "/upload.json.tmp";
 
   if (index == 0) {
@@ -251,7 +283,7 @@ void AccessDb::handle_raw_request_(httpd_req_t *req) {
     remove(json_tmp.c_str());
     remove(db_tmp.c_str());
     this->publish_status_("error", "parse_failed");
-    this->publish_healthy_(this->index_loaded_);
+    this->publish_healthy_(this->index_loaded());
     httpd_resp_set_type(req, "application/json");
     httpd_resp_send(req, "{\"ok\":false,\"error\":\"parse_failed\"}", HTTPD_RESP_USE_STRLEN);
     return;
@@ -259,28 +291,40 @@ void AccessDb::handle_raw_request_(httpd_req_t *req) {
 
   remove(json_tmp.c_str());
   // rename() replaces the live database in one step (LittleFS); deleting it
-  // first would lose the access list if the rename then failed.
-  if (rename(db_tmp.c_str(), this->db_path_.c_str()) != 0) {
+  // first would lose the access list if the rename then failed. The lock keeps
+  // lookups (main loop) from reading the file while it is swapped.
+  bool renamed;
+  bool loaded;
+  LoadedHeader header;
+  {
+    std::lock_guard<std::mutex> lock(this->db_mutex_);
+    renamed = rename(db_tmp.c_str(), this->db_path_.c_str()) == 0;
+    if (renamed) {
+      this->load_header_();
+    }
+    loaded = this->index_loaded_;
+    header = this->header_;
+  }
+  if (!renamed) {
     remove(db_tmp.c_str());
     this->busy_ = false;
-    this->publish_healthy_(this->index_loaded_);
+    this->publish_healthy_(loaded);
     this->publish_status_("error", "rename_failed");
     httpd_resp_set_type(req, "application/json");
     httpd_resp_send(req, "{\"ok\":false,\"error\":\"rename_failed\"}", HTTPD_RESP_USE_STRLEN);
     return;
   }
 
-  this->index_loaded_ = this->load_header_();
   this->busy_ = false;
-  this->publish_healthy_(this->index_loaded_);
+  this->publish_healthy_(loaded);
   this->publish_sync_time_();
   this->publish_status_("ready");
 
   if (this->version_sensor_ != nullptr) {
-    this->version_sensor_->publish_state(this->header_.version);
+    this->version_sensor_->publish_state(header.version);
   }
   if (this->entry_count_sensor_ != nullptr) {
-    this->entry_count_sensor_->publish_state(this->header_.entry_count);
+    this->entry_count_sensor_->publish_state(header.entry_count);
   }
 
   httpd_resp_set_type(req, "application/json");
@@ -455,6 +499,7 @@ uint32_t AccessDb::parse_rfid_key_(const std::string &rfid_code) {
 }
 
 AccessDbLookupResult AccessDb::lookup(const std::string &rfid_code) {
+  std::lock_guard<std::mutex> lock(this->db_mutex_);
   if (!this->index_loaded_) {
     return {};
   }
@@ -467,6 +512,7 @@ AccessDbLookupResult AccessDb::lookup(const std::string &rfid_code) {
 
 AccessDbLookupResult AccessDb::lookup_by_uid(const std::string &uid) {
   AccessDbLookupResult result;
+  std::lock_guard<std::mutex> lock(this->db_mutex_);
   if (!this->index_loaded_ || uid.empty()) {
     return result;
   }
