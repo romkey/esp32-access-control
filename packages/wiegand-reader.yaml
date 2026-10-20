@@ -5,13 +5,16 @@
 # `access_granted`), door-relays.yaml (`door_unlock_pulse`) and
 # access-site.yaml (`access_syslog_cfg`). Wiegand needs ESPHome 2025.3.
 # Provides: the `wiegand` reader `wiegand_keypad`, light `wiegand_led`, switch
-# `wiegand_beeper`, and the last tag, key, facility code and card number.
+# `wiegand_beeper`, script `wiegand_acknowledge`, and the last tag, key, facility code and card number.
 #
 # Substitutions (default):
 #   wiegand_d0_pin, wiegand_d1_pin (required)  reader data lines
 #   wiegand_led_pin, wiegand_beep_pin (required)  reader feedback lines
 #   wiegand_led_inverted ("false"), wiegand_beep_inverted ("false")
 #       readers usually switch these by pulling the wire low: set "true"
+#   wiegand_ack_beep_ms ("150"), wiegand_ack_led_ms ("500")
+#       how long the beeper and the LED stay on after a granted tag
+#       (the LED time must be at least the beep time)
 #   wiegand_led_name ("Wiegand LED"), wiegand_beeper_name ("Wiegand Beeper")
 #   wiegand_facility_name ("RFID Facility Code")
 #   wiegand_card_name ("RFID Card Number")
@@ -19,6 +22,8 @@
 #   wiegand_last_key_name ("Wiegand Last Key")
 
 substitutions:
+  wiegand_ack_beep_ms: "150"
+  wiegand_ack_led_ms: "500"
   wiegand_led_inverted: "false"
   wiegand_beep_inverted: "false"
   wiegand_led_name: "Wiegand LED"
@@ -68,8 +73,7 @@ wiegand:
               id(matched_user_name).publish_state(result.name);
               id(matched_user_nickname).publish_state(result.nickname);
               id(access_granted).publish_state(true);
-              id(wiegand_led).turn_on();
-              id(wiegand_beeper).turn_on();
+              id(wiegand_acknowledge).execute();
               id(door_unlock_pulse).execute();
               id(access_syslog_cfg).send_door_opened();
             } else {
@@ -93,6 +97,18 @@ output:
     pin:
       number: ${wiegand_beep_pin}
       inverted: ${wiegand_beep_inverted}
+
+# Beep and LED flash on a granted tag; both switch off again afterwards.
+script:
+  - id: wiegand_acknowledge
+    mode: restart
+    then:
+      - light.turn_on: wiegand_led
+      - switch.turn_on: wiegand_beeper
+      - delay: ${wiegand_ack_beep_ms}ms
+      - switch.turn_off: wiegand_beeper
+      - delay: !lambda 'return (uint32_t) (${wiegand_ack_led_ms} - ${wiegand_ack_beep_ms});'
+      - light.turn_off: wiegand_led
 
 light:
   - platform: binary

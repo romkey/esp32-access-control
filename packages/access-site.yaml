@@ -1,5 +1,7 @@
 # Site identity and syslog: names this controller and reports events (online,
-# door opened) to a syslog server; also serves the remote-unlock endpoint.
+# door opened) to a syslog server. Also serves a POST endpoint that records
+# "unlocked by <person>" in syslog for a UID in the access database. It only
+# logs: it does not operate the door relay.
 #
 # Needs: secret `syslog_server`; push-auth.yaml (`push_auth_cfg`) and
 # access-db.yaml (`access_db_cfg`).

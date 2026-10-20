@@ -4,7 +4,8 @@
 # Needs: the pin(s) below. The board has no relay output of its own; the pins
 # are whatever you wire the driver to, so the including config must set them.
 # Provides: switches `door_relay_1` / `door_relay_2` and the script
-# `door_unlock_pulse`, which wiegand-reader.yaml and access-site.yaml use.
+# `door_unlock_pulse`, which wiegand-reader.yaml runs on a granted tag.
+# Nothing else calls it: the unlock endpoint in access-site.yaml only logs.
 #
 # Substitutions (default):
 #   door_relay_1_pin (required)           e.g. GPIO38

@@ -26,6 +26,17 @@ All notable changes to this project are documented here. The format follows
   `examples/common/base.yaml`. Pins are substitutions; the door relay pins are
   placeholders (GPIO38/39) until the wiring is decided.
 
+### Fixed
+
+- The reader LED and beeper no longer stay on after a granted tag; the new
+  `wiegand_acknowledge` script switches them off again.
+- Access database uploads and unlock requests failed on current ESPHome
+  (2026.9), which reads the POST body before the handler runs; both now take
+  it in `handleBody`. Clients must send a non-form `Content-Type`
+  (`application/json`).
+- A failed rename no longer deletes the live access database; the new file
+  replaces it in one step.
+
 ### Changed
 
 - `examples/simple.yaml` now includes `examples/common/base.yaml`: encrypted

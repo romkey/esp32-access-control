@@ -1,5 +1,5 @@
 # Push authentication: a shared token that authorizes the controller's HTTP
-# endpoints (access database push, remote unlock).
+# endpoints (access database push, unlock logging).
 #
 # Needs: secret `push_auth_token`.
 # Provides: the `push_auth` component with id `push_auth_cfg`, which
