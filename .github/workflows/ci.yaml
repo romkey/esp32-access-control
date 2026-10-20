@@ -1,0 +1,201 @@
+name: CI
+
+# Always runs, so the required "CI passed" check always reports (a
+# path-filtered workflow that doesn't run blocks the PR forever). Docs-only
+# changes skip just the firmware builds.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      beta:
+        description: "Also build against ESPHome beta"
+        type: boolean
+        default: false
+  schedule:
+    # Weekly: catches stable releases that break the build, and builds
+    # against ESPHome beta as an early warning.
+    - cron: "17 5 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Empty means latest stable. Pin with a repository variable, e.g. 2026.9.1.
+  ESPHOME_VERSION: ${{ vars.ESPHOME_VERSION }}
+  CCACHE_MAXSIZE: 500M
+
+jobs:
+  configs:
+    name: Find configs
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      list: ${{ steps.find.outputs.list }}
+      channels: ${{ steps.find.outputs.channels }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0  # to diff against the base
+      - id: find
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          BETA: ${{ github.event_name == 'schedule' || inputs.beta }}
+        run: |
+          list=$(scripts/list-configs.sh --json)
+          # Skip firmware builds when only docs, datasheets or the license
+          # changed. Scheduled and manual runs always build.
+          if [ -n "$BASE" ] && [ "$BASE" != 0000000000000000000000000000000000000000 ] \
+            && ! git diff --name-only "$BASE" HEAD | grep -qvE '(\.md$|^docs/|^datasheets/|^LICENSE$)'; then
+            echo "::notice::Only docs changed; skipping firmware builds"
+            list='[]'
+          fi
+          echo "list=$list" >> "$GITHUB_OUTPUT"
+          if [ "$BETA" = true ]; then
+            echo 'channels=["stable","beta"]' >> "$GITHUB_OUTPUT"
+          else
+            echo 'channels=["stable"]' >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    name: ${{ matrix.config }} (${{ matrix.channel }})
+    needs: configs
+    if: needs.configs.outputs.list != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        config: ${{ fromJSON(needs.configs.outputs.list) }}
+        channel: ${{ fromJSON(needs.configs.outputs.channels) }}
+    steps:
+      - uses: actions/checkout@v7
+
+      # Native ESPHome via uv installs in seconds; pulling the Docker image
+      # takes longer and makes cache directories root-owned.
+      - uses: astral-sh/setup-uv@v10.3.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: .github/workflows/ci.yaml
+          # Matrix jobs share one uv cache; let only the first save it.
+          save-cache: ${{ strategy.job-index == 0 }}
+
+      - name: Install ESPHome and ccache
+        id: esphome
+        env:
+          CHANNEL: ${{ matrix.channel }}
+          SRC_HASH: >-
+            ${{ hashFiles('examples/**', 'firmware/**',
+            'packages/**', 'components/**') }}
+        run: |
+          if [ "$CHANNEL" = beta ]; then
+            uv tool install --prerelease allow esphome
+          else
+            uv tool install "esphome${ESPHOME_VERSION:+==$ESPHOME_VERSION}"
+          fi
+          # ESPHome uses ccache automatically when it is on PATH.
+          sudo apt-get install -y --no-install-recommends ccache \
+            || { sudo apt-get update && sudo apt-get install -y --no-install-recommends ccache; }
+          echo "version=$(esphome version | awk '{print $NF}')" >> "$GITHUB_OUTPUT"
+          echo "src=$SRC_HASH" >> "$GITHUB_OUTPUT"
+          echo "ESPHOME_BUILD_PATH=$HOME/esphome-build" >> "$GITHUB_ENV"
+          echo "CCACHE_DIR=$HOME/ccache" >> "$GITHUB_ENV"
+          cp examples/secrets.yaml.example examples/secrets.yaml
+
+      # Toolchains only change with the ESPHome version, so this key rarely
+      # changes and the cache is saved rarely.
+      - name: Cache toolchains
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.platformio
+            ~/.cache/esphome
+          key: toolchains-${{ matrix.config }}-${{ steps.esphome.outputs.version }}
+          restore-keys: toolchains-${{ matrix.config }}-
+
+      # Build tree + ccache make rebuilds incremental. Saved whenever sources
+      # change; restores the newest previous build for this config.
+      - name: Cache build
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/esphome-build
+            ~/ccache
+          key: build-${{ matrix.config }}-${{ steps.esphome.outputs.version }}-${{ steps.esphome.outputs.src }}
+          restore-keys: |
+            build-${{ matrix.config }}-${{ steps.esphome.outputs.version }}-
+            build-${{ matrix.config }}-
+
+      # A beta failure is an early warning, not a broken build: those steps
+      # may fail without failing the job, and a warning says so below.
+      - name: esphome config
+        id: config
+        continue-on-error: ${{ matrix.channel == 'beta' }}
+        run: esphome config "${{ matrix.config }}"
+
+      - name: esphome compile
+        id: compile
+        if: steps.config.outcome == 'success'
+        continue-on-error: ${{ matrix.channel == 'beta' }}
+        # The PlatformIO registry is occasionally flaky; retry before failing.
+        run: |
+          for attempt in 1 2 3; do
+            esphome compile "${{ matrix.config }}" && exit 0
+            echo "::warning::compile attempt $attempt failed"
+            sleep 15
+          done
+          exit 1
+
+      - name: Warn about beta failures
+        if: matrix.channel == 'beta' && (steps.config.outcome == 'failure' || steps.compile.outcome == 'failure')
+        run: echo "::warning::${{ matrix.config }} fails to build with ESPHome ${{ steps.esphome.outputs.version }}"
+
+      - name: ccache stats
+        if: always()
+        run: ccache --show-stats || true
+
+  tests:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - id: check
+        run: |
+          if ls tests/test_*.py >/dev/null 2>&1; then echo "present=true" >> "$GITHUB_OUTPUT"; fi
+      - if: steps.check.outputs.present == 'true'
+        uses: astral-sh/setup-uv@v10.3.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: tests/requirements.txt
+      - if: steps.check.outputs.present == 'true'
+        run: |
+          if [ -f tests/requirements.txt ]; then
+            uvx --with-requirements tests/requirements.txt pytest@9.1.1 tests
+          else
+            uvx pytest@9.1.1 tests
+          fi
+
+  # The one required status check. Matrix job names change with the config
+  # list, so branch protection requires this instead.
+  passed:
+    name: CI passed
+    if: always()
+    needs: [configs, build, tests]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          for result in $RESULTS; do
+            case "$result" in
+              success | skipped) ;;
+              *) echo "::error::A CI job finished with '$result'"; exit 1 ;;
+            esac
+          done

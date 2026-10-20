@@ -1,0 +1,80 @@
+# Lint and format checks. The same hooks run three ways:
+#   docker compose run --rm lint        # no local installs needed
+#   uvx pre-commit install              # run automatically on git commit
+#   .github/workflows/lint.yaml         # CI
+# Renovate keeps the revs current, except clang-format, which matches the
+# version ESPHome itself pins.
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-added-large-files
+        args: [--maxkb=5000]  # datasheet PDFs are fine, firmware is not
+      - id: check-merge-conflict
+      - id: detect-private-key
+      # KiCad writes hw/, and kilint generates BOFFF.md; don't fight them.
+      - id: end-of-file-fixer
+        exclude: ^(hw/|BOFFF\.md$)
+      - id: trailing-whitespace
+        exclude: ^(hw/|BOFFF\.md$)
+
+  - repo: https://github.com/adrienverge/yamllint
+    rev: v1.38.0
+    hooks:
+      - id: yamllint
+        args: [--strict]
+        exclude: ^\.clang-format$
+
+  - repo: https://github.com/Mateusz-Grzelinski/actionlint-py
+    rev: v1.7.12.25
+    hooks:
+      - id: actionlint
+        # Bundled so workflow shell is checked locally exactly as in CI.
+        additional_dependencies: [shellcheck-py==0.11.0.1]
+
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.11.0.1
+    hooks:
+      - id: shellcheck
+
+  # Secrets (RULES.md §7). gitleaks checks staged changes for tokens and
+  # keys; CI and `docker compose run --rm secrets` scan the whole history.
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      - id: gitleaks
+
+  # Custom components: format like upstream ESPHome.
+  - repo: https://github.com/pre-commit/mirrors-clang-format
+    rev: v13.0.1
+    hooks:
+      - id: clang-format
+        types_or: [c, c++]
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.17.1
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: local
+    hooks:
+      - id: datasheet-licenses
+        name: every datasheet has a -license.txt
+        entry: scripts/check-datasheets.sh
+        language: unsupported_script
+        pass_filenames: false
+        files: ^datasheets/
+      - id: esphome-secrets
+        name: no real or hard-coded ESPHome secrets
+        entry: scripts/check-secrets.py
+        language: python
+        additional_dependencies: [pyyaml==6.0.3]
+        types: [text]
+      - id: no-firmware-images
+        name: no firmware images
+        entry: Firmware images contain the Wi-Fi credentials they were built with; don't commit them
+        language: fail
+        files: \.(bin|elf|uf2|hex)$

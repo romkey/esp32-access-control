@@ -1,0 +1,6 @@
+txs0108e.pdf is copyright Texas Instruments Incorporated and is not covered by
+this repository's license. It is included unmodified, for reference only.
+For terms of use and the latest version, see the manufacturer:
+
+Source: https://www.ti.com/lit/ds/symlink/txs0108e.pdf
+Retrieved: 2026-09-11

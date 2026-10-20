@@ -1,6 +1,59 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": [
-    "config:recommended"
+  "extends": ["config:recommended"],
+  "pre-commit": {
+    "enabled": true
+  },
+  "packageRules": [
+    {
+      "matchManagers": ["github-actions"],
+      "groupName": "GitHub Actions"
+    },
+    {
+      "matchManagers": ["pre-commit"],
+      "groupName": "pre-commit hooks"
+    },
+    {
+      "description": "clang-format follows the version ESPHome pins",
+      "matchPackageNames": ["pre-commit/mirrors-clang-format"],
+      "enabled": false
+    }
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "ESPHome remote packages: github://owner/repo/path@vX.Y.Z",
+      "managerFilePatterns": ["/\\.ya?ml$/"],
+      "matchStrings": ["github://(?<depName>[\\w.-]+/[\\w.-]+)/[^@\\s]+@(?<currentValue>v?\\d+\\.\\d+\\.\\d+)"],
+      "datasourceTemplate": "github-tags"
+    },
+    {
+      "customType": "regex",
+      "description": "Python tools run with uvx tool@version",
+      "managerFilePatterns": ["/\\.ya?ml$/"],
+      "matchStrings": ["uvx (?<depName>[\\w-]+)@(?<currentValue>\\d+\\.\\d+\\.\\d+)"],
+      "datasourceTemplate": "pypi"
+    },
+    {
+      "customType": "regex",
+      "description": "uv image in docker-compose.yaml's inline Dockerfile",
+      "managerFilePatterns": ["/(^|/)(docker-)?compose\\.ya?ml$/"],
+      "matchStrings": ["FROM (?<depName>ghcr\\.io/astral-sh/uv):(?<currentValue>[\\w.-]+)"],
+      "datasourceTemplate": "docker"
+    },
+    {
+      "customType": "regex",
+      "description": "gitleaks image in workflows and docker-compose.yaml",
+      "managerFilePatterns": ["/\\.ya?ml$/"],
+      "matchStrings": ["(?<depName>ghcr\\.io/gitleaks/gitleaks):(?<currentValue>v\\d+\\.\\d+\\.\\d+)"],
+      "datasourceTemplate": "docker"
+    },
+    {
+      "customType": "regex",
+      "description": "ESP Web Tools in the firmware install page",
+      "managerFilePatterns": ["/(^|/)web/.+\\.html$/"],
+      "matchStrings": ["unpkg\\.com/(?<depName>esp-web-tools)@(?<currentValue>\\d+\\.\\d+\\.\\d+)"],
+      "datasourceTemplate": "npm"
+    }
   ]
 }

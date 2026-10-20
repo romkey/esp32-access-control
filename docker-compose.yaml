@@ -1,38 +1,91 @@
-# ESPHome for this repo. Config YAML and local_components live in the project root.
+# Work on this project without installing ESPHome.
 #
-# Setup (once):
-#   cp src/secrets.yaml.example src/secrets.yaml   # edit with your Wi-Fi credentials
+#   cp examples/secrets.yaml.example examples/secrets.yaml   # then edit it
+#   docker compose run --rm validate      # esphome config on every example
+#   docker compose run --rm build         # compile every example
+#   docker compose run --rm firmware      # compile, then copy images to dist/
+#   docker compose run --rm lint          # all pre-commit checks, like CI
+#   docker compose run --rm secrets       # scan the git history for secrets
+#   docker compose run --rm esphome run examples/example.yaml   # flash via OTA
+#   docker compose up dashboard           # web UI on :6052
 #
-# Dashboard (edit YAML, compile, OTA upload):
-#   docker compose up
-#   open http://localhost:6052
+# Speed: the ESPHome image keeps toolchains and its compiler cache under
+# /cache and build trees under /build when those are mounted. Both are named
+# volumes here, so toolchains download once and rebuilds are incremental.
+# Named volumes are also much faster than bind mounts on macOS.
 #
-# One-shot compile:
-#   docker compose run --rm esphome compile seeed-spectra6-13.yml
-#
-# One-shot OTA upload (device must already be on the network):
-#   docker compose run --rm esphome upload seeed-spectra6-13.yml
-#
-# Logs:
-#   docker compose run --rm esphome logs seeed-spectra6-13.yml
-#
-# USB serial flash from Docker works on Linux only. On macOS, compile here and
-# flash via the dashboard OTA/web installer, or use esphome natively for USB.
+# Set ESPHOME_VERSION to pin a release, e.g. ESPHOME_VERSION=2026.9.1.
+# Docker Desktop on macOS cannot pass USB through. For a first flash, run the
+# firmware service and upload dist/<name>.factory.bin with
+# https://web.esphome.io; use OTA after that.
+
+x-esphome: &esphome
+  image: ghcr.io/esphome/esphome:${ESPHOME_VERSION:-stable}
+  # Re-check the floating tag once a day so "stable" doesn't go stale.
+  pull_policy: daily
+  volumes:
+    - .:/project
+    - esphome-cache:/cache
+    - esphome-build:/build
+  working_dir: /project
 
 services:
+  # Any esphome subcommand: docker compose run --rm esphome <cmd> <file>
   esphome:
-    image: ghcr.io/esphome/esphome:stable
-    container_name: esp32-access-control-esphome
-    restart: unless-stopped
+    <<: *esphome
+
+  validate:
+    <<: *esphome
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["exec /entrypoint.sh config $$(scripts/list-configs.sh)"]
+
+  # What CI runs.
+  build:
+    <<: *esphome
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["exec /entrypoint.sh compile $$(scripts/list-configs.sh)"]
+
+  # Builds live in the esphome-build volume, out of the host's reach. This
+  # compiles every config and copies <name>.factory.bin and <name>.ota.bin
+  # to dist/ (gitignored: the images contain your Wi-Fi credentials).
+  firmware:
+    <<: *esphome
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        /entrypoint.sh compile $$(scripts/list-configs.sh)
+        && python3 scripts/export-firmware.py dist $$(scripts/list-configs.sh)
+
+  dashboard:
+    <<: *esphome
+    command: dashboard /project/examples
     ports:
       - "6052:6052"
+    restart: unless-stopped
+
+  # Runs .pre-commit-config.yaml: yamllint, actionlint, clang-format, ruff...
+  lint:
+    build:
+      dockerfile_inline: |
+        FROM ghcr.io/astral-sh/uv:0.13.2-python3.13-trixie-slim
+        RUN apt-get update \
+         && apt-get install -y --no-install-recommends git \
+         && rm -rf /var/lib/apt/lists/* \
+         && git config --system --add safe.directory '*'
     volumes:
-      - ./src:/config
-    environment:
-      # Required on macOS/Windows where Docker host networking is unavailable.
-      ESPHOME_DASHBOARD_USE_PING: "true"
-    # Linux: uncomment to flash over USB from the dashboard or CLI.
-    # privileged: true
-    # devices:
-    #   - /dev/ttyUSB0:/dev/ttyUSB0
-    #   - /dev/ttyACM0:/dev/ttyACM0
+      - .:/project
+      - lint-cache:/root/.cache
+    working_dir: /project
+    command: uvx pre-commit@4.7.0 run --all-files --show-diff-on-failure
+
+  # Scans every commit in the git history for secrets, like CI does.
+  secrets:
+    image: ghcr.io/gitleaks/gitleaks:v8.30.1
+    volumes:
+      - .:/project
+    command: git /project --redact --verbose
+
+volumes:
+  esphome-cache:
+  esphome-build:
+  lint-cache:

@@ -1,0 +1,342 @@
+name: Release
+
+# main is protected, so releases go through a PR (see docs/releasing.md in
+# esphome-ai-coding-rules):
+# 1. Actions tab -> Release -> Run workflow, choosing patch, minor or major.
+#    The prepare job bumps the version on a release/vX.Y.Z branch, opens a
+#    "Release vX.Y.Z" PR, and approves the PR's CI and Lint runs (GitHub
+#    holds runs on PRs opened by a workflow until they're approved).
+# 2. Merge the PR once checks pass. The tag job tags the merge commit and
+#    the release jobs publish it.
+# Pushing a vX.Y.Z tag yourself also works.
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "Version to bump (minor resets patch; major resets both)"
+        type: choice
+        options: [patch, minor, major]
+        default: patch
+  pull_request:
+    types: [closed]
+    branches: [main]
+  push:
+    tags: ["v[0-9]+.[0-9]+.[0-9]+*"]
+
+permissions:
+  contents: read
+
+# One group per version: the run for a merged release/vX.Y.Z PR and any run
+# for the vX.Y.Z tag share it, so they can't publish the same release at
+# once. The button's runs and unrelated PR closes get groups of their own.
+concurrency:
+  group: >-
+    release-${{ github.event_name == 'push' && format('release/{0}', github.ref_name)
+    || github.event.pull_request.head.ref || github.ref }}
+  cancel-in-progress: false
+
+env:
+  ESPHOME_VERSION: ${{ vars.ESPHOME_VERSION }}
+
+jobs:
+  prepare:
+    name: Open release PR
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40  # includes waiting up to 30 minutes for CI
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+    steps:
+      - name: Only release from main
+        if: github.ref != 'refs/heads/main'
+        run: |
+          echo "::error::Run the release from main, not $GITHUB_REF_NAME"
+          exit 1
+
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0  # all tags, to find the latest version
+
+      # Merging a PR starts CI on main, so a release right after a merge
+      # waits for that CI rather than failing.
+      - name: Wait for CI to pass on this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          state() { gh run list --workflow ci.yaml --limit 1 --json status,conclusion \
+            --jq '.[] | "\(.status) \(.conclusion)"' "$@"; }
+          for i in $(seq 1 90); do  # up to 30 minutes
+            run=$(state --commit "$GITHUB_SHA")
+            case "$run" in "completed "*) break ;; esac
+            # No CI run for this commit after 2 minutes: it didn't run CI.
+            if [ -z "$run" ] && [ "$i" -ge 6 ]; then break; fi
+            if [ "$i" = 1 ]; then echo "Waiting for CI on $GITHUB_SHA to finish..."; fi
+            sleep 20
+          done
+          [ -n "$run" ] || run=$(state --branch main --status completed)
+          if [ "$run" != "completed success" ]; then
+            echo "::error::CI for this commit is '${run:-missing}', not success"
+            exit 1
+          fi
+
+      - name: Bump version on a release branch and open a PR
+        id: pr
+        env:
+          BUMP: ${{ inputs.bump }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(scripts/bump-version.sh "$BUMP")
+          branch="release/v$version"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git commit -am "Release v$version"
+          git push origin "$branch"
+          {
+            echo "Merge to tag and publish **v$version**. Release notes:"
+            echo
+            scripts/changelog-section.sh "$version"
+          } > "$RUNNER_TEMP/body.md"
+          url=$(gh pr create --base main --head "$branch" --title "Release v$version" \
+            --body-file "$RUNNER_TEMP/body.md")
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+
+      # GitHub holds the CI and Lint runs of a PR opened by GITHUB_TOKEN until
+      # someone approves them; the required checks only count those runs.
+      - name: Approve the release PR's CI and Lint runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          URL: ${{ steps.pr.outputs.url }}
+        run: |
+          sha=$(git rev-parse HEAD)
+          held() { gh run list --commit "$sha" --event pull_request --status action_required \
+            --json databaseId,workflowName --jq "$1"; }
+          for _ in $(seq 1 24); do
+            [ "$(held 'length')" -ge 2 ] && break
+            sleep 5
+          done
+          ids=$(held '.[].databaseId')
+          approved=true
+          for id in $ids; do
+            gh api -X POST "repos/$GITHUB_REPOSITORY/actions/runs/$id/approve" >/dev/null || approved=false
+          done
+          if [ -z "$ids" ] || [ "$approved" != true ]; then
+            echo "::warning::Open $URL and click 'Approve and run workflows' to start CI and Lint"
+          else
+            echo "::notice::Opened $URL; merge it once CI and Lint pass"
+          fi
+
+  tag:
+    name: Tag release
+    if: >-
+      github.event_name == 'pull_request' && github.event.pull_request.merged
+      && startsWith(github.event.pull_request.head.ref, 'release/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
+      - id: tag
+        env:
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          tag="${HEAD_REF#release/}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$tag" -m "$tag"
+          git push origin "$tag"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+  release:
+    name: GitHub Release
+    needs: tag
+    # After the tag job, or on its own for a tag pushed by hand. Tags the tag
+    # job pushed are skipped here: that run already publishes them.
+    if: >-
+      !cancelled() && (needs.tag.result == 'success'
+      || (needs.tag.result == 'skipped' && github.event_name == 'push'
+      && github.actor != 'github-actions[bot]'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ needs.tag.outputs.tag || github.ref_name }}
+    outputs:
+      tag: ${{ env.TAG }}
+      # Empty when already released, so no firmware is rebuilt.
+      firmware: ${{ steps.check.outputs.firmware || '[]' }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.TAG }}
+
+      # Idempotent: a second run for the same tag (e.g. if the tag job ever
+      # pushes with a token that triggers workflows) succeeds without
+      # republishing.
+      - name: Skip if already released
+        id: exists
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "::notice::$TAG is already released; nothing to do"
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check changelog and project version
+        if: steps.exists.outputs.exists != 'true'
+        id: check
+        run: |
+          version="${TAG#v}"
+          scripts/changelog-section.sh "$version" > "$RUNNER_TEMP/notes.md"
+          # Every project_version must match the tag.
+          wrong=$(grep -rhs --include='*.yaml' --include='*.yml' \
+            'project_version:' examples firmware packages \
+            | grep -v "\"$version\"" || true)
+          if [ -n "$wrong" ]; then
+            echo "::error::project_version must be \"$version\": $wrong"
+            exit 1
+          fi
+          echo "firmware=$(scripts/list-configs.sh --json firmware)" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        if: steps.exists.outputs.exists != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          prerelease=""
+          case "$TAG" in *-*) prerelease="--prerelease" ;; esac
+          gh release create "$TAG" --verify-tag --title "$TAG" \
+            --notes-file "$RUNNER_TEMP/notes.md" $prerelease
+
+  # Everything below runs only for projects with a firmware/ directory
+  # (applications that publish installable firmware).
+  firmware:
+    name: Firmware ${{ matrix.config }}
+    needs: release
+    # Explicit status checks: prepare is skipped on tag pushes, and an
+    # implicit success() would skip this job too.
+    if: ${{ !cancelled() && needs.release.result == 'success' && needs.release.outputs.firmware != '[]' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      matrix:
+        config: ${{ fromJSON(needs.release.outputs.firmware) }}
+    env:
+      TAG: ${{ needs.release.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.TAG }}
+      - uses: astral-sh/setup-uv@v10.3.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: .github/workflows/ci.yaml
+          # Matrix jobs share one uv cache; let only the first save it.
+          save-cache: ${{ strategy.job-index == 0 }}
+
+      - name: Install ESPHome and ccache
+        id: esphome
+        env:
+          SRC_HASH: >-
+            ${{ hashFiles('examples/**', 'firmware/**',
+            'packages/**', 'components/**') }}
+        run: |
+          uv tool install "esphome${ESPHOME_VERSION:+==$ESPHOME_VERSION}"
+          sudo apt-get install -y --no-install-recommends ccache \
+            || { sudo apt-get update && sudo apt-get install -y --no-install-recommends ccache; }
+          echo "version=$(esphome version | awk '{print $NF}')" >> "$GITHUB_OUTPUT"
+          echo "src=$SRC_HASH" >> "$GITHUB_OUTPUT"
+          echo "ESPHOME_BUILD_PATH=$HOME/esphome-build" >> "$GITHUB_ENV"
+          echo "CCACHE_DIR=$HOME/ccache" >> "$GITHUB_ENV"
+
+      # Reuse what CI already built for this commit; never save from here.
+      - uses: actions/cache/restore@v6
+        with:
+          path: |
+            ~/.platformio
+            ~/.cache/esphome
+          key: toolchains-${{ matrix.config }}-${{ steps.esphome.outputs.version }}
+          restore-keys: toolchains-${{ matrix.config }}-
+      - uses: actions/cache/restore@v6
+        with:
+          path: |
+            ~/esphome-build
+            ~/ccache
+          key: build-${{ matrix.config }}-${{ steps.esphome.outputs.version }}-${{ steps.esphome.outputs.src }}
+          restore-keys: build-${{ matrix.config }}-
+
+      - name: esphome compile
+        run: |
+          for attempt in 1 2 3; do
+            esphome compile "${{ matrix.config }}" && break
+            [ "$attempt" = 3 ] && exit 1
+            sleep 15
+          done
+
+      - name: Collect images and manifest
+        run: |
+          scripts/collect-firmware.sh "${{ matrix.config }}" dist "${TAG#v}" \
+            "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$TAG"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: firmware-${{ strategy.job-index }}
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    name: Publish firmware
+    needs: [release, firmware]
+    if: ${{ !cancelled() && needs.firmware.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    env:
+      TAG: ${{ needs.release.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.TAG }}
+
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: firmware-*
+          path: dist
+          merge-multiple: true
+
+      - name: Attach images to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$TAG" dist/*.bin
+
+      # Web installer: web/ plus the images, manifests and an index of them.
+      - name: Assemble site
+        run: |
+          mkdir -p site/firmware
+          cp -R web/. site/
+          cp dist/* site/firmware/
+          cd site/firmware
+          jq -n '[inputs | {name, manifest: (input_filename | ltrimstr("./"))}]' \
+            ./*.manifest.json > index.json
+
+      - uses: actions/configure-pages@v6
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: site
+      - id: deploy
+        uses: actions/deploy-pages@v5
