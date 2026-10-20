@@ -9,6 +9,7 @@
 #include <esp_http_server.h>
 
 #include <cstdint>
+#include <cstdio>
 #include <string>
 
 namespace esphome {
@@ -48,6 +49,8 @@ class AccessDb : public web_server_idf::AsyncWebHandler, public Component {
 
   bool canHandle(web_server_idf::AsyncWebServerRequest *request) const override;
   void handleRequest(web_server_idf::AsyncWebServerRequest *request) override;
+  void handleBody(web_server_idf::AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index,
+                  size_t total) override;
   void handle_raw_request_(httpd_req_t *req);
   bool isRequestHandlerTrivial() const override { return false; }
 
@@ -56,7 +59,6 @@ class AccessDb : public web_server_idf::AsyncWebHandler, public Component {
   void publish_status_(const std::string &status, const std::string &error = "");
   void publish_healthy_(bool healthy);
   void publish_sync_time_();
-  bool stream_body_to_file_(httpd_req_t *req, size_t content_len, const std::string &dest_path);
   bool build_index_from_json_file_(const std::string &json_path, std::string &response_json);
   bool load_header_();
   AccessDbLookupResult lookup_loaded_(uint32_t rfid) const;
@@ -70,6 +72,9 @@ class AccessDb : public web_server_idf::AsyncWebHandler, public Component {
   size_t max_body_size_{131072};
   bool fs_mounted_{false};
   bool busy_{false};
+  enum class BodyState { NONE, RECEIVING, BAD_TOKEN, BUSY, BAD_SIZE, STREAM_FAILED };
+  BodyState body_state_{BodyState::NONE};
+  FILE *body_file_{nullptr};
 
   struct LoadedHeader {
     uint32_t magic{0};

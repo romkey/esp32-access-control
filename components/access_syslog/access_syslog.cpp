@@ -206,22 +206,21 @@ bool AccessSyslog::canHandle(web_server_idf::AsyncWebServerRequest *request) con
   return request->url_to(url_buf) == this->unlock_path_;
 }
 
-bool AccessSyslog::read_request_body_(httpd_req_t *req, size_t max_len, std::string &body) {
-  if (req->content_len == 0 || req->content_len > max_len) {
-    return false;
-  }
-
-  body.assign(req->content_len, '\0');
-  size_t received = 0;
-  while (received < req->content_len) {
-    const int recv_len = httpd_req_recv(req, &body[received], req->content_len - received);
-    if (recv_len <= 0) {
-      body.clear();
-      return false;
+// ESPHome's web server reads a POST body that isn't a form before it calls
+// handleRequest() and hands it over in chunks here (see AccessDb::handleBody).
+// Clients must send a non-form Content-Type such as application/json.
+void AccessSyslog::handleBody(web_server_idf::AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index,
+                              size_t total) {
+  if (index == 0) {
+    this->body_.clear();
+    this->body_ok_ = total > 0 && total <= UNLOCK_BODY_MAX;
+    if (this->body_ok_) {
+      this->body_.reserve(total);
     }
-    received += recv_len;
   }
-  return true;
+  if (this->body_ok_) {
+    this->body_.append(reinterpret_cast<const char *>(data), len);
+  }
 }
 
 void AccessSyslog::handleRequest(web_server_idf::AsyncWebServerRequest *request) {
@@ -242,7 +241,10 @@ void AccessSyslog::handle_raw_request_(httpd_req_t *req) {
   }
 
   std::string body;
-  if (!this->read_request_body_(req, UNLOCK_BODY_MAX, body)) {
+  body.swap(this->body_);
+  const bool body_ok = this->body_ok_;
+  this->body_ok_ = false;
+  if (!body_ok || body.empty()) {
     httpd_resp_set_type(req, "application/json");
     httpd_resp_send(req, "{\"ok\":false,\"error\":\"invalid_body\"}", HTTPD_RESP_USE_STRLEN);
     return;

@@ -152,40 +152,97 @@ bool AccessDb::canHandle(web_server_idf::AsyncWebServerRequest *request) const {
 
 void AccessDb::handleRequest(web_server_idf::AsyncWebServerRequest *request) { this->handle_raw_request_(*request); }
 
+// ESPHome's web server reads a POST body that isn't a form before it calls
+// handleRequest() and hands it over in chunks here, so the body has to be
+// consumed in this method; httpd_req_recv() in handleRequest() finds nothing.
+// Clients must send a non-form Content-Type such as application/json.
+void AccessDb::handleBody(web_server_idf::AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index,
+                          size_t total) {
+  httpd_req_t *req = *request;
+  const std::string json_tmp = this->mount_path_ + "/upload.json.tmp";
+
+  if (index == 0) {
+    if (this->body_file_ != nullptr) {
+      // A previous upload died mid-body (connection dropped); clean it up.
+      fclose(this->body_file_);
+      this->body_file_ = nullptr;
+      remove(json_tmp.c_str());
+      this->busy_ = false;
+    }
+    if (this->auth_ == nullptr || !this->auth_->validate_raw(req)) {
+      this->body_state_ = BodyState::BAD_TOKEN;
+    } else if (this->busy_) {
+      this->body_state_ = BodyState::BUSY;
+    } else if (total == 0 || total > this->max_body_size_) {
+      this->body_state_ = BodyState::BAD_SIZE;
+    } else {
+      this->body_file_ = fopen(json_tmp.c_str(), "wb");
+      if (this->body_file_ == nullptr) {
+        ESP_LOGE(TAG, "Failed to open %s for writing", json_tmp.c_str());
+        this->body_state_ = BodyState::STREAM_FAILED;
+      } else {
+        this->busy_ = true;
+        this->body_state_ = BodyState::RECEIVING;
+        this->publish_status_("receiving");
+      }
+    }
+  }
+
+  if (this->body_state_ != BodyState::RECEIVING || this->body_file_ == nullptr) {
+    return;
+  }
+  if (fwrite(data, 1, len, this->body_file_) != len) {
+    fclose(this->body_file_);
+    this->body_file_ = nullptr;
+    remove(json_tmp.c_str());
+    this->busy_ = false;
+    this->body_state_ = BodyState::STREAM_FAILED;
+    return;
+  }
+  if (index + len >= total) {
+    fclose(this->body_file_);
+    this->body_file_ = nullptr;
+  }
+}
+
 void AccessDb::handle_raw_request_(httpd_req_t *req) {
-  if (this->auth_ == nullptr || !this->auth_->validate_raw(req)) {
+  const BodyState state = this->body_state_;
+  this->body_state_ = BodyState::NONE;
+
+  const char *error = nullptr;
+  switch (state) {
+    case BodyState::RECEIVING:
+      break;
+    case BodyState::BAD_TOKEN:
+      error = "invalid_token";
+      break;
+    case BodyState::BUSY:
+      error = "busy";
+      break;
+    case BodyState::STREAM_FAILED:
+      error = "stream_failed";
+      break;
+    case BodyState::BAD_SIZE:
+      error = "payload_too_large";
+      break;
+    case BodyState::NONE:
+      // No body was delivered (empty, or sent as a form).
+      error = (this->auth_ == nullptr || !this->auth_->validate_raw(req)) ? "invalid_token" : "payload_too_large";
+      break;
+  }
+  if (error != nullptr) {
+    if (state == BodyState::STREAM_FAILED) {
+      this->publish_status_("error", "stream_failed");
+    }
+    char response[64];
+    snprintf(response, sizeof(response), "{\"ok\":false,\"error\":\"%s\"}", error);
     httpd_resp_set_type(req, "application/json");
-    httpd_resp_send(req, "{\"ok\":false,\"error\":\"invalid_token\"}", HTTPD_RESP_USE_STRLEN);
+    httpd_resp_send(req, response, HTTPD_RESP_USE_STRLEN);
     return;
   }
-
-  if (this->busy_) {
-    httpd_resp_set_type(req, "application/json");
-    httpd_resp_send(req, "{\"ok\":false,\"error\":\"busy\"}", HTTPD_RESP_USE_STRLEN);
-    return;
-  }
-
-  const size_t content_len = req->content_len;
-  if (content_len == 0 || content_len > this->max_body_size_) {
-    httpd_resp_set_type(req, "application/json");
-    httpd_resp_send(req, "{\"ok\":false,\"error\":\"payload_too_large\"}", HTTPD_RESP_USE_STRLEN);
-    return;
-  }
-
-  this->busy_ = true;
-  this->publish_status_("receiving");
 
   const std::string json_tmp = this->mount_path_ + "/upload.json.tmp";
   const std::string db_tmp = this->mount_path_ + "/access.db.tmp";
-
-  if (!this->stream_body_to_file_(req, content_len, json_tmp)) {
-    this->busy_ = false;
-    this->publish_status_("error", "stream_failed");
-    httpd_resp_set_type(req, "application/json");
-    httpd_resp_send(req, "{\"ok\":false,\"error\":\"stream_failed\"}", HTTPD_RESP_USE_STRLEN);
-    remove(json_tmp.c_str());
-    return;
-  }
 
   this->publish_status_("building");
   std::string response_json;
@@ -201,9 +258,12 @@ void AccessDb::handle_raw_request_(httpd_req_t *req) {
   }
 
   remove(json_tmp.c_str());
-  remove(this->db_path_.c_str());
+  // rename() replaces the live database in one step (LittleFS); deleting it
+  // first would lose the access list if the rename then failed.
   if (rename(db_tmp.c_str(), this->db_path_.c_str()) != 0) {
+    remove(db_tmp.c_str());
     this->busy_ = false;
+    this->publish_healthy_(this->index_loaded_);
     this->publish_status_("error", "rename_failed");
     httpd_resp_set_type(req, "application/json");
     httpd_resp_send(req, "{\"ok\":false,\"error\":\"rename_failed\"}", HTTPD_RESP_USE_STRLEN);
@@ -225,42 +285,6 @@ void AccessDb::handle_raw_request_(httpd_req_t *req) {
 
   httpd_resp_set_type(req, "application/json");
   httpd_resp_send(req, response_json.c_str(), HTTPD_RESP_USE_STRLEN);
-}
-
-bool AccessDb::stream_body_to_file_(httpd_req_t *req, size_t content_len, const std::string &dest_path) {
-  FILE *file = fopen(dest_path.c_str(), "wb");
-  if (file == nullptr) {
-    ESP_LOGE(TAG, "Failed to open %s for writing", dest_path.c_str());
-    return false;
-  }
-
-  size_t remaining = content_len;
-  size_t bytes_since_yield = 0;
-  auto buffer = std::make_unique<char[]>(STREAM_CHUNK_SIZE);
-
-  while (remaining > 0) {
-    const size_t to_read = std::min(remaining, STREAM_CHUNK_SIZE);
-    const int recv_len = httpd_req_recv(req, buffer.get(), to_read);
-    if (recv_len <= 0) {
-      fclose(file);
-      remove(dest_path.c_str());
-      return false;
-    }
-    if (fwrite(buffer.get(), 1, recv_len, file) != static_cast<size_t>(recv_len)) {
-      fclose(file);
-      remove(dest_path.c_str());
-      return false;
-    }
-    remaining -= recv_len;
-    bytes_since_yield += recv_len;
-    if (bytes_since_yield >= 16384) {
-      vTaskDelay(1);
-      bytes_since_yield = 0;
-    }
-  }
-
-  fclose(file);
-  return true;
 }
 
 bool AccessDb::build_index_from_json_file_(const std::string &json_path, std::string &response_json) {

@@ -36,6 +36,8 @@ class AccessSyslog : public web_server_idf::AsyncWebHandler, public Component {
 
   bool canHandle(web_server_idf::AsyncWebServerRequest *request) const override;
   void handleRequest(web_server_idf::AsyncWebServerRequest *request) override;
+  void handleBody(web_server_idf::AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index,
+                  size_t total) override;
   void handle_raw_request_(httpd_req_t *req);
   bool isRequestHandlerTrivial() const override { return false; }
 
@@ -46,7 +48,6 @@ class AccessSyslog : public web_server_idf::AsyncWebHandler, public Component {
   void send_unlocked_by_person_(const std::string &person_name);
   bool ensure_socket_();
   void close_socket_();
-  bool read_request_body_(httpd_req_t *req, size_t max_len, std::string &body);
 
   std::string server_;
   uint16_t port_{514};
@@ -57,6 +58,8 @@ class AccessSyslog : public web_server_idf::AsyncWebHandler, public Component {
   access_db::AccessDb *access_db_{nullptr};
   push_auth::PushAuth *auth_{nullptr};
   int socket_{-1};
+  std::string body_;
+  bool body_ok_{false};
 };
 
 extern AccessSyslog *global_access_syslog;  // NOLINT
