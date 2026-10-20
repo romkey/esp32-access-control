@@ -37,6 +37,9 @@ All notable changes to this project are documented here. The format follows
 - The syslog server may now be a hostname as well as an IPv4 address; it is
   resolved once and cached, and a failed lookup is retried every 30 seconds.
   IPv6 addresses are rejected at validation instead of failing at run time.
+- Resolving a syslog hostname no longer blocks: it runs in a short-lived
+  background task, messages are held (up to 8) until the address is known, and
+  the address is looked up again after a Wi-Fi reconnect or a failed send.
 - A failed rename no longer deletes the live access database; the new file
   replaces it in one step.
 

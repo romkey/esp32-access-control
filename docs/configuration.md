@@ -37,6 +37,8 @@ so include them together via `access-door.yaml`.
 
 The access database and unlock endpoints take POST bodies as `application/json` (ESPHome hands form-encoded bodies to the handler differently, so a form content type is rejected).
 
+A syslog hostname is resolved in the background; until it is known, syslog messages are held (the latest 8) and sent when it resolves, so a grant never waits on DNS. The address is looked up again after a reconnect or a failed send.
+
 A successful tag lookup publishes the matched user, pulses the door relay and logs to syslog.
 
 ## `examples/simple.yaml`

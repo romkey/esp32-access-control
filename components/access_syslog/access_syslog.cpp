@@ -1,6 +1,7 @@
 #include "access_syslog.h"
 
 #include "esphome/components/web_server_base/web_server_base.h"
+#include "esphome/components/network/util.h"
 #include "esphome/core/hal.h"
 #include "esphome/core/log.h"
 
@@ -14,6 +15,10 @@
 #include <cerrno>
 #include <cstdio>
 #include <cstring>
+#include <mutex>
+
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 
 namespace esphome {
 namespace access_syslog {
@@ -21,6 +26,7 @@ namespace access_syslog {
 static const char *const TAG = "access_syslog";
 static constexpr size_t UNLOCK_BODY_MAX = 512;
 static constexpr uint32_t RESOLVE_RETRY_MS = 30000;
+static constexpr size_t MAX_PENDING = 8;
 
 AccessSyslog *global_access_syslog = nullptr;  // NOLINT
 
@@ -121,55 +127,130 @@ void AccessSyslog::close_socket_() {
   }
 }
 
-// The server is an IPv4 literal or a hostname. The result is cached, so a send
-// never does a DNS lookup once it has succeeded; after a failure the lookup is
-// retried at most every RESOLVE_RETRY_MS so a dead resolver can't stall sends.
+// The server is an IPv4 literal or a hostname. A literal is parsed here (no
+// network access). A hostname is resolved by a short-lived FreeRTOS task, never
+// on the caller's thread: getaddrinfo() blocks for the resolver timeout, and
+// callers include the main loop (a granted tag unlocks the door and then
+// logs). This is why it is a task and not lwIP's dns_gethostbyname(): that
+// needs the tcpip core lock and a callback that fires on the tcpip thread,
+// while getaddrinfo() is the call ESP-IDF supports from any task. This only
+// reads the cached result; after a failure the next task starts at most every
+// RESOLVE_RETRY_MS.
 bool AccessSyslog::resolve_server_() {
-  if (this->dest_valid_) {
+  if (this->dest_valid_.load(std::memory_order_acquire)) {
     return true;
   }
+  if (this->resolving_.load()) {
+    return false;
+  }
+
+  struct in_addr literal {};
+  if (inet_pton(AF_INET, this->server_.c_str(), &literal) == 1) {
+    this->dest_.sin_family = AF_INET;
+    this->dest_.sin_port = htons(this->port_);
+    this->dest_.sin_addr = literal;
+    this->dest_valid_.store(true, std::memory_order_release);
+    return true;
+  }
+
   const uint32_t now = millis();
   if (this->resolve_attempted_ && now - this->last_resolve_ms_ < RESOLVE_RETRY_MS) {
     return false;
   }
+  if (!network::is_connected()) {
+    return false;
+  }
   this->resolve_attempted_ = true;
   this->last_resolve_ms_ = now;
-
-  struct sockaddr_in dest {};
-  dest.sin_family = AF_INET;
-  dest.sin_port = htons(this->port_);
-  if (inet_pton(AF_INET, this->server_.c_str(), &dest.sin_addr) != 1) {
-    struct addrinfo hints {};
-    hints.ai_family = AF_INET;
-    hints.ai_socktype = SOCK_DGRAM;
-    struct addrinfo *res = nullptr;
-    const int err = getaddrinfo(this->server_.c_str(), nullptr, &hints, &res);
-    if (err != 0 || res == nullptr) {
-      ESP_LOGW(TAG, "Cannot resolve syslog server %s (error %d); retrying in %us", this->server_.c_str(), err,
-               static_cast<unsigned>(RESOLVE_RETRY_MS / 1000));
-      if (res != nullptr) {
-        freeaddrinfo(res);
-      }
-      return false;
-    }
-    dest.sin_addr = reinterpret_cast<struct sockaddr_in *>(res->ai_addr)->sin_addr;
-    freeaddrinfo(res);
+  this->resolving_.store(true);
+  if (xTaskCreate(&AccessSyslog::resolve_task_, "syslog_dns", 4096, this, 1, nullptr) != pdPASS) {
+    ESP_LOGW(TAG, "Cannot start the syslog DNS task");
+    this->resolving_.store(false);
   }
-  this->dest_ = dest;
-  this->dest_valid_ = true;
-  return true;
+  return false;
 }
 
+void AccessSyslog::resolve_task_(void *arg) {
+  auto *self = static_cast<AccessSyslog *>(arg);
+  struct addrinfo hints {};
+  hints.ai_family = AF_INET;
+  hints.ai_socktype = SOCK_DGRAM;
+  struct addrinfo *res = nullptr;
+  const int err = getaddrinfo(self->server_.c_str(), nullptr, &hints, &res);
+  if (err != 0 || res == nullptr) {
+    ESP_LOGW(TAG, "Cannot resolve syslog server %s (error %d); retrying in %us", self->server_.c_str(), err,
+             static_cast<unsigned>(RESOLVE_RETRY_MS / 1000));
+  } else {
+    self->dest_.sin_family = AF_INET;
+    self->dest_.sin_port = htons(self->port_);
+    self->dest_.sin_addr = reinterpret_cast<struct sockaddr_in *>(res->ai_addr)->sin_addr;
+    self->dest_valid_.store(true, std::memory_order_release);
+  }
+  if (res != nullptr) {
+    freeaddrinfo(res);
+  }
+  self->resolving_.store(false);
+  vTaskDelete(nullptr);
+}
+
+// Forget a resolved hostname so the next send looks it up again; the address
+// may have changed. A literal needs no lookup. Not while a lookup is running.
+void AccessSyslog::invalidate_server_() {
+  if (this->resolving_.load()) {
+    return;
+  }
+  struct in_addr literal {};
+  if (inet_pton(AF_INET, this->server_.c_str(), &literal) == 1) {
+    return;
+  }
+  this->dest_valid_.store(false, std::memory_order_release);
+  this->resolve_attempted_ = false;
+}
+
+void AccessSyslog::loop() {
+  const bool connected = network::is_connected();
+  if (connected && !this->was_connected_) {
+    this->invalidate_server_();
+  }
+  this->was_connected_ = connected;
+
+  if (!this->pending_.empty() && this->resolve_server_()) {
+    std::deque<std::string> pending;
+    {
+      std::lock_guard<std::mutex> lock(this->pending_mutex_);
+      pending.swap(this->pending_);
+    }
+    for (const auto &message : pending) {
+      this->transmit_(message);
+    }
+  }
+}
+
+// Sends now if the server address is known; otherwise holds the last
+// MAX_PENDING messages until loop() sees it resolved.
 void AccessSyslog::send_message(const std::string &message) {
   if (message.empty()) {
     return;
   }
-
-  if (!this->ensure_socket_()) {
+  if (this->resolve_server_()) {
+    this->transmit_(message);
     return;
   }
+  std::lock_guard<std::mutex> lock(this->pending_mutex_);
+  if (this->pending_.size() >= MAX_PENDING) {
+    this->pending_.pop_front();
+  }
+  this->pending_.push_back(message);
+  const uint32_t now = millis();
+  if (now - this->last_pending_warn_ms_ >= RESOLVE_RETRY_MS || this->last_pending_warn_ms_ == 0) {
+    this->last_pending_warn_ms_ = now;
+    ESP_LOGW(TAG, "Syslog server %s not resolved yet; holding up to %u messages", this->server_.c_str(),
+             static_cast<unsigned>(MAX_PENDING));
+  }
+}
 
-  if (!this->resolve_server_()) {
+void AccessSyslog::transmit_(const std::string &message) {
+  if (!this->ensure_socket_()) {
     return;
   }
 
@@ -194,6 +275,7 @@ void AccessSyslog::send_message(const std::string &message) {
   if (sent < 0) {
     ESP_LOGW(TAG, "Syslog send failed: errno %d", errno);
     this->close_socket_();
+    this->invalidate_server_();
     return;
   }
 

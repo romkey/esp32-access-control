@@ -8,6 +8,9 @@
 
 #include <esp_http_server.h>
 #include <lwip/sockets.h>
+#include <atomic>
+#include <deque>
+#include <mutex>
 #include <string>
 
 namespace esphome {
@@ -25,6 +28,7 @@ class AccessSyslog : public web_server_idf::AsyncWebHandler, public Component {
   void set_unlock_path(const std::string &path) { this->unlock_path_ = path; }
 
   void setup() override;
+  void loop() override;
   void dump_config() override;
   float get_setup_priority() const override;
 
@@ -49,6 +53,9 @@ class AccessSyslog : public web_server_idf::AsyncWebHandler, public Component {
   void send_unlocked_by_person_(const std::string &person_name);
   bool ensure_socket_();
   bool resolve_server_();
+  void invalidate_server_();
+  void transmit_(const std::string &message);
+  static void resolve_task_(void *arg);
   void close_socket_();
 
   std::string server_;
@@ -61,7 +68,12 @@ class AccessSyslog : public web_server_idf::AsyncWebHandler, public Component {
   push_auth::PushAuth *auth_{nullptr};
   int socket_{-1};
   struct sockaddr_in dest_ {};
-  bool dest_valid_{false};
+  std::atomic<bool> dest_valid_{false};
+  std::atomic<bool> resolving_{false};
+  bool was_connected_{false};
+  std::deque<std::string> pending_;
+  std::mutex pending_mutex_;
+  uint32_t last_pending_warn_ms_{0};
   bool resolve_attempted_{false};
   uint32_t last_resolve_ms_{0};
   std::string body_;
