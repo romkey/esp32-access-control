@@ -14,7 +14,7 @@ on:
 jobs:
   build:
     name: Render STLs
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v7
 
@@ -37,7 +37,7 @@ jobs:
 
   previews:
     name: Render previews
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     # Needs OpenGL through a virtual display, which is the flaky part of
     # this job. It never fails the badge.
     continue-on-error: true
