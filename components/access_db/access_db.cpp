@@ -2,6 +2,7 @@
 
 #include "esphome/components/web_server_base/web_server_base.h"
 #include "esphome/core/application.h"
+#include "esphome/core/hal.h"
 #include "esphome/core/log.h"
 
 #include <ArduinoJson.h>
@@ -22,6 +23,10 @@ namespace access_db {
 static const char *const TAG = "access_db";
 static constexpr uint32_t ACCESS_DB_MAGIC = 0x42444341;  // 'ACDB' little-endian
 static constexpr size_t STREAM_CHUNK_SIZE = 4096;
+// Longest a PUT upload may take from its start, however many receive timeouts.
+static constexpr uint32_t UPLOAD_DEADLINE_MS = 30000;
+// After this long a busy flag with no finished upload is considered stuck.
+static constexpr uint32_t UPLOAD_WATCHDOG_MS = 60000;
 
 AccessDb *global_access_db = nullptr;  // NOLINT
 
@@ -112,8 +117,7 @@ void AccessDb::setup() {
           httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, nullptr);
           return ESP_FAIL;
         }
-        global_access_db->handle_put_(req);
-        return ESP_OK;
+        return global_access_db->handle_put_(req);
       },
       .user_ctx = nullptr,
   };
@@ -170,8 +174,15 @@ void AccessDb::handleBody(web_server_idf::AsyncWebServerRequest *request, uint8_
 
 // The PUT route is registered with httpd directly, so ESPHome has not read its
 // body; read it here in chunks and feed it through the same path.
-void AccessDb::handle_put_(httpd_req_t *req) {
+// httpd_req_recv() returns HTTPD_SOCK_ERR_TIMEOUT for a stalled but live
+// connection, so that is retried until UPLOAD_DEADLINE_MS after the start of
+// the upload; 0 (closed by the peer) and every other negative value mean the
+// socket is gone, and the handler returns ESP_FAIL so httpd closes it. A
+// rejected or failed upload is answered at once and also closes the socket,
+// since the unread rest of the body would corrupt a kept-alive connection.
+esp_err_t AccessDb::handle_put_(httpd_req_t *req) {
   const size_t total = req->content_len;
+  const uint32_t start = millis();
   auto buffer = std::make_unique<uint8_t[]>(STREAM_CHUNK_SIZE);
   size_t index = 0;
   if (total == 0) {
@@ -180,14 +191,59 @@ void AccessDb::handle_put_(httpd_req_t *req) {
   while (index < total) {
     const int n =
         httpd_req_recv(req, reinterpret_cast<char *>(buffer.get()), std::min(total - index, STREAM_CHUNK_SIZE));
+    if (n == HTTPD_SOCK_ERR_TIMEOUT) {
+      if (millis() - start > UPLOAD_DEADLINE_MS) {
+        this->abort_upload_("upload_timeout");
+        httpd_resp_set_status(req, "408 Request Timeout");
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_send(req, "{\"ok\":false,\"error\":\"upload_timeout\"}", HTTPD_RESP_USE_STRLEN);
+        return ESP_FAIL;
+      }
+      continue;
+    }
     if (n <= 0) {
-      // Connection dropped mid-body; the next upload cleans the temp file up.
-      return;
+      this->abort_upload_("connection_lost");
+      return ESP_FAIL;
     }
     this->on_body_(req, buffer.get(), n, index, total);
     index += n;
+    if (this->body_state_ != BodyState::RECEIVING) {
+      break;
+    }
   }
+  const bool complete = index >= total;
   this->handle_raw_request_(req);
+  return complete ? ESP_OK : ESP_FAIL;
+}
+
+// Throws away a half-received upload (HTTP task): closes and removes the temp
+// files, clears the busy flag and reports why in the status.
+void AccessDb::abort_upload_(const char *detail) {
+  if (this->body_file_ != nullptr) {
+    fclose(this->body_file_);
+    this->body_file_ = nullptr;
+  }
+  remove((this->mount_path_ + "/upload.json.tmp").c_str());
+  remove((this->mount_path_ + "/access.db.tmp").c_str());
+  this->body_state_ = BodyState::NONE;
+  this->busy_ = false;
+  this->publish_healthy_(this->index_loaded());
+  this->publish_status_("error", detail);
+}
+
+// Main loop. An upload whose connection died inside ESPHome's body reader
+// never reaches handleRequest, so nothing on the HTTP task clears busy_. After
+// UPLOAD_WATCHDOG_MS the busy flag and status are reset here; the open temp
+// file is closed by the next upload (on_body_, first chunk).
+void AccessDb::loop() {
+  if (!this->busy_ || millis() - this->upload_start_ms_ <= UPLOAD_WATCHDOG_MS) {
+    return;
+  }
+  bool expected = true;
+  if (this->busy_.compare_exchange_strong(expected, false)) {
+    this->publish_healthy_(this->index_loaded());
+    this->publish_status_("error", "upload_stalled");
+  }
 }
 
 void AccessDb::on_body_(httpd_req_t *req, uint8_t *data, size_t len, size_t index, size_t total) {
@@ -213,6 +269,7 @@ void AccessDb::on_body_(httpd_req_t *req, uint8_t *data, size_t len, size_t inde
         ESP_LOGE(TAG, "Failed to open %s for writing", json_tmp.c_str());
         this->body_state_ = BodyState::STREAM_FAILED;
       } else {
+        this->upload_start_ms_ = millis();
         this->busy_ = true;
         this->body_state_ = BodyState::RECEIVING;
         this->publish_status_("receiving");
@@ -244,6 +301,11 @@ void AccessDb::handle_raw_request_(httpd_req_t *req) {
   const char *error = nullptr;
   switch (state) {
     case BodyState::RECEIVING:
+      if (this->body_file_ != nullptr) {
+        // The body never finished (see loop()); don't build from a partial file.
+        this->abort_upload_("stream_failed");
+        error = "stream_failed";
+      }
       break;
     case BodyState::BAD_TOKEN:
       error = "invalid_token";

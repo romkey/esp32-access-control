@@ -42,7 +42,7 @@ class AccessSyslog : public web_server_idf::AsyncWebHandler, public Component {
   void handleRequest(web_server_idf::AsyncWebServerRequest *request) override;
   void handleBody(web_server_idf::AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index,
                   size_t total) override;
-  void handle_put_(httpd_req_t *req);
+  esp_err_t handle_put_(httpd_req_t *req);
   void handle_raw_request_(httpd_req_t *req);
   bool isRequestHandlerTrivial() const override { return false; }
 
@@ -81,6 +81,7 @@ class AccessSyslog : public web_server_idf::AsyncWebHandler, public Component {
   // HTTP server task only: the unlock request body.
   std::string body_;
   bool body_ok_{false};
+  bool body_complete_{false};
 };
 
 extern AccessSyslog *global_access_syslog;  // NOLINT

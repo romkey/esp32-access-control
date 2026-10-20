@@ -35,7 +35,7 @@ Every entity name is also a substitution (`*_name`); see each file's header. Pac
 reference each other's ids (`push_auth_cfg`, `access_db_cfg`, `door_unlock_pulse`, ...),
 so include them together via `access-door.yaml`.
 
-The access database and unlock endpoints take POST bodies as `application/json` (ESPHome hands form-encoded bodies to the handler differently, so a form content type is rejected).
+Uploads must finish within 30 seconds (PUT; receive timeouts are retried until then) or are rejected with 408; a connection that drops mid-upload is cleaned up and the status shows `connection_lost` or `upload_stalled`. The access database and unlock endpoints take POST bodies as `application/json` (ESPHome hands form-encoded bodies to the handler differently, so a form content type is rejected).
 
 A syslog hostname is resolved in the background; until it is known, syslog messages are held (the latest 8) and sent when it resolves, so a grant never waits on DNS. The address is looked up again after a reconnect or a failed send.
 

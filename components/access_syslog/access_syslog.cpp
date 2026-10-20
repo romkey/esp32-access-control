@@ -28,6 +28,7 @@ static const char *const TAG = "access_syslog";
 static constexpr size_t UNLOCK_BODY_MAX = 512;
 static constexpr uint32_t RESOLVE_RETRY_MS = 30000;
 static constexpr size_t MAX_PENDING = 16;
+static constexpr uint32_t BODY_DEADLINE_MS = 5000;
 
 AccessSyslog *global_access_syslog = nullptr;  // NOLINT
 
@@ -57,8 +58,7 @@ void AccessSyslog::setup() {
           httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, nullptr);
           return ESP_FAIL;
         }
-        global_access_syslog->handle_put_(req);
-        return ESP_OK;
+        return global_access_syslog->handle_put_(req);
       },
       .user_ctx = nullptr,
   };
@@ -374,9 +374,18 @@ void AccessSyslog::handleBody(web_server_idf::AsyncWebServerRequest *request, ui
 
 // The PUT route is registered with httpd directly, so ESPHome has not read its
 // body; read it here and feed it through the same path. body_ is only touched
-// on the HTTP server task, which handles one request at a time.
-void AccessSyslog::handle_put_(httpd_req_t *req) {
+// on the HTTP server task, which handles one request at a time. A receive
+// timeout is retried until BODY_DEADLINE_MS; any other failure means the
+// socket is gone and ESP_FAIL makes httpd close it.
+esp_err_t AccessSyslog::handle_put_(httpd_req_t *req) {
   const size_t total = req->content_len;
+  if (total > UNLOCK_BODY_MAX) {
+    // Too large to read; answer and let httpd close the connection.
+    this->on_body_(nullptr, 0, 0, total);
+    this->handle_raw_request_(req);
+    return ESP_FAIL;
+  }
+  const uint32_t start = millis();
   char buffer[128];
   size_t index = 0;
   if (total == 0) {
@@ -384,18 +393,31 @@ void AccessSyslog::handle_put_(httpd_req_t *req) {
   }
   while (index < total) {
     const int n = httpd_req_recv(req, buffer, std::min(total - index, sizeof(buffer)));
+    if (n == HTTPD_SOCK_ERR_TIMEOUT) {
+      if (millis() - start > BODY_DEADLINE_MS) {
+        this->body_complete_ = false;
+        httpd_resp_set_status(req, "408 Request Timeout");
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_send(req, "{\"ok\":false,\"error\":\"body_timeout\"}", HTTPD_RESP_USE_STRLEN);
+        return ESP_FAIL;
+      }
+      continue;
+    }
     if (n <= 0) {
-      return;
+      this->body_complete_ = false;
+      return ESP_FAIL;
     }
     this->on_body_(reinterpret_cast<uint8_t *>(buffer), n, index, total);
     index += n;
   }
   this->handle_raw_request_(req);
+  return ESP_OK;
 }
 
 void AccessSyslog::on_body_(uint8_t *data, size_t len, size_t index, size_t total) {
   if (index == 0) {
     this->body_.clear();
+    this->body_complete_ = false;
     this->body_ok_ = total > 0 && total <= UNLOCK_BODY_MAX;
     if (this->body_ok_) {
       this->body_.reserve(total);
@@ -403,6 +425,7 @@ void AccessSyslog::on_body_(uint8_t *data, size_t len, size_t index, size_t tota
   }
   if (this->body_ok_) {
     this->body_.append(reinterpret_cast<const char *>(data), len);
+    this->body_complete_ = index + len >= total;
   }
 }
 
@@ -425,8 +448,9 @@ void AccessSyslog::handle_raw_request_(httpd_req_t *req) {
 
   std::string body;
   body.swap(this->body_);
-  const bool body_ok = this->body_ok_;
+  const bool body_ok = this->body_complete_;  // not a partial body from an aborted request
   this->body_ok_ = false;
+  this->body_complete_ = false;
   if (!body_ok || body.empty()) {
     httpd_resp_set_type(req, "application/json");
     httpd_resp_send(req, "{\"ok\":false,\"error\":\"invalid_body\"}", HTTPD_RESP_USE_STRLEN);

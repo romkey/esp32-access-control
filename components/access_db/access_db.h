@@ -8,6 +8,7 @@
 #include "esphome/components/binary_sensor/binary_sensor.h"
 #include <esp_http_server.h>
 
+#include <atomic>
 #include <cstdint>
 #include <cstdio>
 #include <mutex>
@@ -60,11 +61,13 @@ class AccessDb : public web_server_idf::AsyncWebHandler, public Component {
   void handleRequest(web_server_idf::AsyncWebServerRequest *request) override;
   void handleBody(web_server_idf::AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index,
                   size_t total) override;
-  void handle_put_(httpd_req_t *req);
+  esp_err_t handle_put_(httpd_req_t *req);
+  void loop() override;
   void handle_raw_request_(httpd_req_t *req);
   bool isRequestHandlerTrivial() const override { return false; }
 
  protected:
+  void abort_upload_(const char *detail);
   void on_body_(httpd_req_t *req, uint8_t *data, size_t len, size_t index, size_t total);
   bool mount_filesystem_();
   void publish_status_(const std::string &status, const std::string &error = "");
@@ -89,7 +92,8 @@ class AccessDb : public web_server_idf::AsyncWebHandler, public Component {
   // state below (busy_, body_*) is only touched on the HTTP server task, which
   // runs one request at a time.
   mutable std::mutex db_mutex_;
-  bool busy_{false};
+  std::atomic<bool> busy_{false};  // also read by loop()
+  std::atomic<uint32_t> upload_start_ms_{0};
   enum class BodyState { NONE, RECEIVING, BAD_TOKEN, BUSY, BAD_SIZE, STREAM_FAILED };
   BodyState body_state_{BodyState::NONE};
   FILE *body_file_{nullptr};

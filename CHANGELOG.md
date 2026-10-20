@@ -47,6 +47,10 @@ All notable changes to this project are documented here. The format follows
   copy.
 - The PUT routes for the database upload and the unlock request read their own
   body again (the POST fix had left them without one).
+- A stalled or dropped access-database upload no longer leaves the database
+  busy: receive timeouts are retried for up to 30 seconds, then the upload is
+  rejected with 408; a closed connection discards the temp files and resets
+  the status, and a watchdog clears a stuck busy flag after 60 seconds.
 - A failed rename no longer deletes the live access database; the new file
   replaces it in one step.
 
