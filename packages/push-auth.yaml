@@ -1,0 +1,45 @@
+# Push authentication: a shared token that authorizes the controller's HTTP
+# endpoints (access database push, remote unlock).
+#
+# Needs: secret `push_auth_token`.
+# Provides: the `push_auth` component with id `push_auth_cfg`, which
+# access-db.yaml and access-site.yaml reference.
+#
+# Substitutions (default):
+#   push_auth_header (Authorization)       HTTP header carrying the token
+#   push_auth_alt_header (X-Push-Token)    fallback header
+#   push_auth_last_result_name ("Push Auth Last Result")
+#   push_auth_last_attempt_name ("Push Auth Last Attempt")
+#   push_auth_failure_count_name ("Push Auth Failure Count")
+#   push_auth_entity_category (diagnostic)
+
+substitutions:
+  push_auth_header: Authorization
+  push_auth_alt_header: X-Push-Token
+  push_auth_last_result_name: "Push Auth Last Result"
+  push_auth_last_attempt_name: "Push Auth Last Attempt"
+  push_auth_failure_count_name: "Push Auth Failure Count"
+  push_auth_entity_category: "diagnostic"
+
+push_auth:
+  id: push_auth_cfg
+  token: !secret push_auth_token
+  header: ${push_auth_header}
+  alt_header: ${push_auth_alt_header}
+
+text_sensor:
+  - platform: push_auth
+    push_auth_id: push_auth_cfg
+    last_result:
+      name: "${push_auth_last_result_name}"
+      entity_category: "${push_auth_entity_category}"
+    last_attempt:
+      name: "${push_auth_last_attempt_name}"
+      entity_category: "${push_auth_entity_category}"
+
+sensor:
+  - platform: push_auth
+    push_auth_id: push_auth_cfg
+    failure_count:
+      name: "${push_auth_failure_count_name}"
+      entity_category: "${push_auth_entity_category}"

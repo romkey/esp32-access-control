@@ -17,7 +17,21 @@ All notable changes to this project are documented here. The format follows
   scripts; AGENTS.md; SECURITY.md; docs/overview.md and docs/configuration.md.
 - License note for each datasheet, and the MIT `LICENSE`.
 
+- Door-controller firmware, brought to the rules' layout: `components/`
+  (`access_db`, `access_site`, `access_syslog`, `push_auth`), `packages/`
+  (`access-door`, `push-auth`, `access-db`, `access-site`, `door-relays`,
+  `wiegand-reader`), `examples/access-control.yaml` and
+  `examples/common/base.yaml`. Pins are substitutions; the door relay pins are
+  placeholders (GPIO38/39) until the wiring is decided.
+
 ### Changed
+
+- `examples/simple.yaml` now includes `examples/common/base.yaml`: encrypted
+  API and OTA, fallback hotspot, safe mode and factory reset buttons, and a
+  web server with authentication.
+- Secrets that were hard-coded in the firmware config (API key, OTA password,
+  fallback hotspot password) are now `!secret`; new secrets `push_auth_token`
+  and `syslog_server`. The old values were never committed.
 
 - `docker-compose.yaml` replaced: the old one was left over from another
   project (it mounted a `src/` directory that doesn't exist here).

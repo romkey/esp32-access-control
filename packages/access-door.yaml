@@ -1,0 +1,24 @@
+# The whole door controller: push auth, access database, site/syslog, door
+# relays and the Wiegand reader. Include this one and give it the pins:
+#
+#   packages:
+#     access-door: !include ../packages/access-door.yaml
+#   substitutions:
+#     door_relay_1_pin: GPIO38
+#     door_relay_2_pin: GPIO39
+#     wiegand_d0_pin: GPIO18
+#     wiegand_d1_pin: GPIO17
+#     wiegand_led_pin: GPIO16
+#     wiegand_beep_pin: GPIO15
+#
+# Needs: secrets `push_auth_token` and `syslog_server`; ESPHome 2025.3.
+# The including config also declares the board, logger, wifi, api and web
+# server (see examples/common/base.yaml). Every substitution of the included
+# packages applies; see their header comments.
+
+packages:
+  push-auth: !include push-auth.yaml
+  access-db: !include access-db.yaml
+  access-site: !include access-site.yaml
+  door-relays: !include door-relays.yaml
+  wiegand-reader: !include wiegand-reader.yaml

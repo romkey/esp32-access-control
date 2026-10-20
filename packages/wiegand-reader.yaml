@@ -1,0 +1,128 @@
+# Wiegand reader and its LED and beeper. On a tag it looks the tag up in the
+# access database; a match unlocks the door and is logged to syslog.
+#
+# Needs: pins below; access-db.yaml (`access_db_cfg`, `matched_user_*`,
+# `access_granted`), door-relays.yaml (`door_unlock_pulse`) and
+# access-site.yaml (`access_syslog_cfg`). Wiegand needs ESPHome 2025.3.
+# Provides: the `wiegand` reader `wiegand_keypad`, light `wiegand_led`, switch
+# `wiegand_beeper`, and the last tag, key, facility code and card number.
+#
+# Substitutions (default):
+#   wiegand_d0_pin, wiegand_d1_pin (required)  reader data lines
+#   wiegand_led_pin, wiegand_beep_pin (required)  reader feedback lines
+#   wiegand_led_inverted ("false"), wiegand_beep_inverted ("false")
+#       readers usually switch these by pulling the wire low: set "true"
+#   wiegand_led_name ("Wiegand LED"), wiegand_beeper_name ("Wiegand Beeper")
+#   wiegand_facility_name ("RFID Facility Code")
+#   wiegand_card_name ("RFID Card Number")
+#   wiegand_last_tag_name ("Wiegand Last Tag")
+#   wiegand_last_key_name ("Wiegand Last Key")
+
+substitutions:
+  wiegand_led_inverted: "false"
+  wiegand_beep_inverted: "false"
+  wiegand_led_name: "Wiegand LED"
+  wiegand_beeper_name: "Wiegand Beeper"
+  wiegand_facility_name: "RFID Facility Code"
+  wiegand_card_name: "RFID Card Number"
+  wiegand_last_tag_name: "Wiegand Last Tag"
+  wiegand_last_key_name: "Wiegand Last Key"
+
+esphome:
+  min_version: 2025.3.0
+
+# Typical wire colours: D0 green, D1 white, LED brown, BEEP blue.
+wiegand:
+  - id: wiegand_keypad
+    d0: ${wiegand_d0_pin}
+    d1: ${wiegand_d1_pin}
+    on_key:
+      then:
+        - logger.log:
+            format: "Received Wiegand key: %d"
+            args: ['x']
+        - text_sensor.template.publish:
+            id: wiegand_last_key
+            state: !lambda 'return std::to_string(x);'
+    on_tag:
+      then:
+        - logger.log:
+            format: "Received Wiegand tag: %s"
+            args: ['x.c_str()']
+        - text_sensor.template.publish:
+            id: wiegand_last_tag
+            state: !lambda 'return x;'
+        - lambda: |-
+            uint32_t value = strtoul(x.c_str(), nullptr, 10);
+
+            uint16_t facility = (value >> 16) & 0xff;
+            uint16_t card = value & 0xffff;
+
+            ESP_LOGI("wiegand", "Facility: %u, Card: %u", facility, card);
+            id(rfid_facility_code).publish_state(facility);
+            id(rfid_card_number).publish_state(card);
+
+            auto result = id(access_db_cfg).lookup(x);
+            if (result.found) {
+              id(matched_user_uid).publish_state(result.uid);
+              id(matched_user_name).publish_state(result.name);
+              id(matched_user_nickname).publish_state(result.nickname);
+              id(access_granted).publish_state(true);
+              id(wiegand_led).turn_on();
+              id(wiegand_beeper).turn_on();
+              id(door_unlock_pulse).execute();
+              id(access_syslog_cfg).send_door_opened();
+            } else {
+              id(matched_user_uid).publish_state("");
+              id(matched_user_name).publish_state("");
+              id(matched_user_nickname).publish_state("");
+              id(access_granted).publish_state(false);
+            }
+    on_raw:
+      - lambda: ESP_LOGI("RAW", "received raw %d bits, value %llx", bits, value);
+
+output:
+  - platform: gpio
+    id: wiegand_led_out
+    pin:
+      number: ${wiegand_led_pin}
+      inverted: ${wiegand_led_inverted}
+
+  - platform: gpio
+    id: wiegand_beep_out
+    pin:
+      number: ${wiegand_beep_pin}
+      inverted: ${wiegand_beep_inverted}
+
+light:
+  - platform: binary
+    id: wiegand_led
+    name: "${wiegand_led_name}"
+    output: wiegand_led_out
+
+switch:
+  - platform: output
+    id: wiegand_beeper
+    name: "${wiegand_beeper_name}"
+    output: wiegand_beep_out
+
+sensor:
+  - platform: template
+    name: "${wiegand_facility_name}"
+    id: rfid_facility_code
+    accuracy_decimals: 0
+    update_interval: never
+
+  - platform: template
+    name: "${wiegand_card_name}"
+    id: rfid_card_number
+    accuracy_decimals: 0
+    update_interval: never
+
+text_sensor:
+  - platform: template
+    id: wiegand_last_tag
+    name: "${wiegand_last_tag_name}"
+  - platform: template
+    id: wiegand_last_key
+    name: "${wiegand_last_key_name}"

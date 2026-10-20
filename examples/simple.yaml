@@ -1,5 +1,9 @@
 esphome:
   name: led-switch
+  comment: Bring-up config for the ESP32-S3 access-control board
+
+packages:
+  base: !include common/base.yaml
 
 esp32:
   board: esp32-s3-devkitc-1
@@ -12,20 +16,8 @@ psram:
   mode: octal
   speed: 80MHz
 
-logger:
-
-api:
-
-ota:
-  - platform: esphome
-
 wifi:
-  ssid: !secret wifi_ssid
-  password: !secret wifi_password
   use_address: 10.0.0.143  # not-a-secret: LAN address of the bring-up device
-
-web_server:
-  version: 3
 
 # The physical LED on pin 8
 output:

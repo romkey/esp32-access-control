@@ -1,0 +1,96 @@
+# Access database: the list of permitted tags, pushed over HTTP and stored in
+# a flash partition, plus the entities that report the last lookup.
+#
+# Needs: push-auth.yaml (id `push_auth_cfg`). The component adds a 512 KB
+# LittleFS partition named `access_db_partition_label` to the partition table.
+# Provides: `access_db_cfg`, and the template entities `matched_user_uid`,
+# `matched_user_name`, `matched_user_nickname` and `access_granted`, which
+# wiegand-reader.yaml fills in.
+#
+# Substitutions (default):
+#   access_db_path (/access-db)           HTTP path the database is pushed to
+#   access_db_max_body_size (131072)      largest accepted push, in bytes
+#   access_db_partition_label (storage)
+#   access_db_mount_path (/storage)
+#   access_db_entity_category (diagnostic)
+#   access_db_version_name ("Access DB Version")
+#   access_db_entry_count_name ("Access DB Entry Count")
+#   access_db_status_name ("Access DB Status")
+#   access_db_last_sync_name ("Access DB Last Sync")
+#   access_db_last_error_name ("Access DB Last Error")
+#   access_db_healthy_name ("Access DB Healthy")
+#   access_db_matched_uid_name ("Matched User UID")
+#   access_db_matched_name_name ("Matched User Name")
+#   access_db_matched_nickname_name ("Matched User Nickname")
+#   access_db_granted_name ("Access Granted")
+
+substitutions:
+  access_db_path: /access-db
+  access_db_max_body_size: "131072"
+  access_db_partition_label: storage
+  access_db_mount_path: /storage
+  access_db_entity_category: "diagnostic"
+  access_db_version_name: "Access DB Version"
+  access_db_entry_count_name: "Access DB Entry Count"
+  access_db_status_name: "Access DB Status"
+  access_db_last_sync_name: "Access DB Last Sync"
+  access_db_last_error_name: "Access DB Last Error"
+  access_db_healthy_name: "Access DB Healthy"
+  access_db_matched_uid_name: "Matched User UID"
+  access_db_matched_name_name: "Matched User Name"
+  access_db_matched_nickname_name: "Matched User Nickname"
+  access_db_granted_name: "Access Granted"
+
+access_db:
+  id: access_db_cfg
+  auth_id: push_auth_cfg
+  path: ${access_db_path}
+  max_body_size: ${access_db_max_body_size}
+  partition_label: ${access_db_partition_label}
+  mount_path: ${access_db_mount_path}
+
+sensor:
+  - platform: access_db
+    access_db_id: access_db_cfg
+    version:
+      name: "${access_db_version_name}"
+      entity_category: "${access_db_entity_category}"
+    entry_count:
+      name: "${access_db_entry_count_name}"
+      entity_category: "${access_db_entity_category}"
+
+text_sensor:
+  - platform: access_db
+    access_db_id: access_db_cfg
+    status:
+      name: "${access_db_status_name}"
+      entity_category: "${access_db_entity_category}"
+    last_sync:
+      name: "${access_db_last_sync_name}"
+      entity_category: "${access_db_entity_category}"
+    last_error:
+      name: "${access_db_last_error_name}"
+      entity_category: "${access_db_entity_category}"
+  - platform: template
+    id: matched_user_uid
+    name: "${access_db_matched_uid_name}"
+    update_interval: never
+  - platform: template
+    id: matched_user_name
+    name: "${access_db_matched_name_name}"
+    update_interval: never
+  - platform: template
+    id: matched_user_nickname
+    name: "${access_db_matched_nickname_name}"
+    update_interval: never
+
+binary_sensor:
+  - platform: access_db
+    access_db_id: access_db_cfg
+    healthy:
+      name: "${access_db_healthy_name}"
+      entity_category: "${access_db_entity_category}"
+  - platform: template
+    id: access_granted
+    name: "${access_db_granted_name}"
+    device_class: door
