@@ -1,0 +1,7 @@
+# actionlint keeps a list of the runner labels it knows, and the release
+# pinned in .pre-commit-config.yaml predates GitHub's ubuntu-26.04 image.
+# The Case workflow runs on it (Renovate moved it there from ubuntu-24.04
+# and the runs succeed). Remove this once actionlint knows the label.
+self-hosted-runner:
+  labels:
+    - ubuntu-26.04
