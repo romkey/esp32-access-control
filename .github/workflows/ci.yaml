@@ -178,7 +178,7 @@ jobs:
           if [ -f tests/requirements.txt ]; then
             uvx --with-requirements tests/requirements.txt pytest@9.1.1 tests
           else
-            uvx pytest@9.1.1 tests
+            uvx pytest@9.2.0 tests
           fi
 
   # The one required status check. Matrix job names change with the config
