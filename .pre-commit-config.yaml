@@ -71,7 +71,7 @@ repos:
         name: no real or hard-coded ESPHome secrets
         entry: scripts/check-secrets.py
         language: python
-        additional_dependencies: [pyyaml==6.0.3]
+        additional_dependencies: [pyyaml==6.0.4]
         types: [text]
       - id: no-firmware-images
         name: no firmware images
